@@ -9,10 +9,8 @@ dashboard-stats.json
 control/
 
 # === 真实平台配置(含你的钱包)— 用 config.*.example.json 起步 ===
-configs/config.vast.json
-configs/config.runpod.json
-configs/config.tensordock.json
-configs/config.salad.json
+configs/config.*.json
+!configs/config.*.example.json
 
 # === 备份 / 缓存 / 系统 ===
 *.bak
