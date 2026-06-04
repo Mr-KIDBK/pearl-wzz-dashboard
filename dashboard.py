@@ -43,6 +43,37 @@ SPECIFIC = {
 }
 HAS_CREATE = {"runpod", "tensordock"}
 
+def platform_of(account_id):
+    """salad-2 → salad ; salad → salad"""
+    return re.sub(r"-\d+$", "", account_id)
+
+def list_accounts():
+    """扫描 configs/config.<X>.json(排除 *.example.json), 返回 account_id 列表, 账号1(无后缀)在前。"""
+    out = []
+    for p in sorted(ROOT.glob("configs/config.*.json")):
+        name = p.name
+        if name.endswith(".example.json"):
+            continue
+        out.append(name[len("config."):-len(".json")])
+    return sorted(out, key=lambda a: (platform_of(a), a))
+
+def account_label(account_id):
+    """卡片标题标签: config 的 account_label 优先; 否则 账号<N>[· org]。"""
+    plat = platform_of(account_id)
+    cfg = read_config(account_id)
+    lbl = cfg.get("account_label")
+    if lbl:
+        return str(lbl)
+    m = re.search(r"-(\d+)$", account_id)
+    n = m.group(1) if m else "1"
+    org = (cfg.get(plat, {}) or {}).get("organization_name")
+    return f"账号{n} · {org}" if org else f"账号{n}"
+
+def key_var_for(account_id):
+    """该账号 API key 的 .env 变量名: config.api_key_env 优先, 否则平台标准名。"""
+    plat = platform_of(account_id)
+    return read_config(account_id).get("api_key_env") or KEYNAME.get(plat, "")
+
 def env_quote(v):
     """单引号包裹值, 内部 ' 转义为 '\\''; 让 .env 被 shell source 时安全、防注入。"""
     return "'" + str(v).replace("'", "'\\''") + "'"
@@ -89,7 +120,11 @@ def cfg_path(plat):
     return ROOT / f"configs/config.{plat}.json"
 
 def prl_address():
-    return read_json(cfg_path("vast"), {}).get("prl_address", "")
+    for a in list_accounts():
+        w = read_config(a).get("prl_address")
+        if w:
+            return w
+    return ""
 
 def read_state(plat):
     return read_json(ROOT / f"state.{plat}.json", {})
@@ -286,6 +321,11 @@ def salad_live():
                 if mid in str(w.get("worker_name") or ""):
                     return w
             return None
+        def pool_worker(name):
+            for w in pool_workers:
+                if str(w.get("worker_name") or "") == str(name):
+                    return w
+            return None
         def pgpu(w):
             gi = (w or {}).get("gpu_info") or []
             return str((gi[0] if gi else {}).get("name") or "").replace("NVIDIA GeForce ", "").strip()
@@ -302,9 +342,9 @@ def salad_live():
                 prio = g.get("priority") or "medium"
                 cls = ((g.get("container") or {}).get("resources") or {}).get("gpu_classes") or []
                 for c in cls:
-                    nm = gp.get(c, {}).get("name")
-                    if nm and nm not in res["gpu_classes"]:
-                        res["gpu_classes"].append(nm)
+                    cname = gp.get(c, {}).get("name")
+                    if cname and cname not in res["gpu_classes"]:
+                        res["gpu_classes"].append(cname)
                 ps = [float(gp.get(c, {}).get("prices", {}).get(prio)) for c in cls
                       if gp.get(c, {}).get("prices", {}).get(prio) is not None]
                 if ps:
@@ -338,7 +378,7 @@ def salad_live():
                 iid = str(inst.get("instance_id") or inst.get("id") or "")
                 mid = str(inst.get("machine_id") or "")
                 w = watch.get(f"{nm}:{iid}") or {}
-                pw = pool_match(mid)
+                pw = pool_match(mid) or pool_worker(nm)
                 gpu = pgpu(pw) or (w.get("gpu") or "").strip() or "?"
                 hr = w.get("last_hashrate_th")
                 if hr is None:
@@ -558,7 +598,7 @@ def gpu_rows(sub):
 
 def build_full_config():
     env = read_env()
-    base = read_config("vast")
+    base = read_config(list_accounts()[0]) if list_accounts() else {}
     common = {k: base.get(k) for k in COMMON_KEYS}
     plats = {}
     for plat in PLATFORMS:
@@ -970,9 +1010,9 @@ let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_coun
 let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
-return `<tr><td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=6 class=muted>无在跑机器</td></tr>`;
+return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
 plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()}</b>${badges}${bh}</div>${sstat}
-<table><tr><th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
+<table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
