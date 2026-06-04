@@ -721,7 +721,8 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .ni.sub{padding-left:24px;font-size:12.5px}
 .nigrp{margin:16px 0 5px;padding:0 13px;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);font-weight:700}
 .sfoot{margin-top:auto;color:var(--mut);font-size:11px;font-family:var(--mono);padding:12px 13px 0;border-top:1px solid var(--bd)}
-main{flex:1;min-width:0;padding:26px 32px;max-width:1040px}
+main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
+.inner{width:100%;max-width:1040px}
 .b-mini{padding:7px 12px;font-size:11.5px}
 </style></head><body>
 <div id=login><div class=box>
@@ -746,7 +747,7 @@ main{flex:1;min-width:0;padding:26px 32px;max-width:1040px}
 </nav>
 <div class=sfoot id=clock></div>
 </aside>
-<main><div id=ov></div><div id=cf style=display:none></div></main>
+<main><div class=inner><div id=ov></div><div id=cf style=display:none></div></div></main>
 </div>
 <div class=toast id=toast></div>
 
