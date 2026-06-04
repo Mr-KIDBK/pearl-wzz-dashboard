@@ -201,6 +201,32 @@ def iso_to_epoch(s):
     except Exception:
         return None
 
+def gpu_key(name):
+    """GPU 名归一化: 去掉 ' (xx GB)' 后缀并小写, 用于跨数据源匹配。"""
+    return re.sub(r"\s*\(.*?\)\s*$", "", str(name or "")).strip().lower()
+
+# Salad 官网各 GPU 档价(low/medium/high), 仅作 gpu-classes API 失败时的兜底
+SALAD_GPU_PRICES = {
+    "rtx 5090":          {"low": 0.31,  "medium": 0.38,  "high": 0.45},
+    "rtx 5090 laptop":   {"low": 0.16,  "medium": 0.22,  "high": 0.28},
+    "rtx 5080":          {"low": 0.25,  "medium": 0.335, "high": 0.42},
+    "rtx 5070 ti":       {"low": 0.16,  "medium": 0.22,  "high": 0.28},
+    "rtx 5070":          {"low": 0.133, "medium": 0.187, "high": 0.24},
+    "rtx 5060 ti":       {"low": 0.107, "medium": 0.143, "high": 0.18},
+    "rtx 4090":          {"low": 0.207, "medium": 0.253, "high": 0.30},
+    "rtx 4080":          {"low": 0.167, "medium": 0.223, "high": 0.28},
+    "rtx 4070 ti super": {"low": 0.147, "medium": 0.203, "high": 0.26},
+    "rtx 4070 ti":       {"low": 0.133, "medium": 0.187, "high": 0.24},
+    "rtx 4070":          {"low": 0.12,  "medium": 0.17,  "high": 0.22},
+    "rtx 4060 ti":       {"low": 0.127, "medium": 0.173, "high": 0.22},
+    "rtx 3090 ti":       {"low": 0.16,  "medium": 0.22,  "high": 0.28},
+    "rtx 3090":          {"low": 0.143, "medium": 0.197, "high": 0.25},
+    "rtx 3080 ti":       {"low": 0.12,  "medium": 0.16,  "high": 0.20},
+    "rtx 3060":          {"low": 0.053, "medium": 0.067, "high": 0.08},
+    "rtx 2080 ti":       {"low": 0.073, "medium": 0.087, "high": 0.10},
+    "rtx a5000":         {"low": 0.143, "medium": 0.197, "high": 0.25},
+}
+
 _gpucls = {"data": None, "ts": 0.0}
 
 def salad_gpu_prices(base, org, key):
@@ -277,6 +303,20 @@ def salad_live():
                     prices += ps
             except Exception:
                 pass
+            # 按组优先级建 GPU名→精确价 映射; 命中用单价, 否则兜底表, 再否则回退区间 label
+            classprice = {}
+            for info in gp.values():
+                pr = info.get("prices", {}).get(prio)
+                if info.get("name") and pr is not None:
+                    classprice[gpu_key(info.get("name"))] = float(pr)
+            def inst_price(gname):
+                k = gpu_key(gname)
+                if k in classprice:
+                    return f"${classprice[k]:.3f}/h"
+                fb = SALAD_GPU_PRICES.get(k, {}).get(prio)
+                if fb is not None:
+                    return f"${fb:.3f}/h"
+                return label
             insts = []
             try:
                 d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
@@ -295,7 +335,7 @@ def salad_live():
                 res["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
-                                         "price_label": label, "hashrate_th": hr})
+                                         "price_label": inst_price(gpu), "hashrate_th": hr})
             if not insts:  # /instances 失败/为空时, 用矿池 salad worker 兜底显示
                 for w in pool_workers:
                     wn = str(w.get("worker_name") or "")
@@ -303,9 +343,10 @@ def salad_live():
                         continue
                     mm = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", wn)
                     mid = mm.group(0) if mm else wn
-                    res["instances"].append({"id": mid, "machine_id": mid, "gpu": pgpu(w) or "?",
+                    igpu = pgpu(w) or "?"
+                    res["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
                                              "group": nm, "state": "running", "started_epoch": None,
-                                             "price_label": label, "hashrate_th": phr(w)})
+                                             "price_label": inst_price(igpu), "hashrate_th": phr(w)})
         if prices:
             lo, hi = min(prices), max(prices)
             res["price_label"] = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
