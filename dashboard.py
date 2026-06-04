@@ -695,18 +695,22 @@ def do_terminate(plat, mid, group=None):
 def _secret():
     return hashlib.sha256(("pearl-dash::" + str(CONF.get("password", ""))).encode()).digest()
 
-def new_session():
+def new_session(role="admin"):
     exp = str(int(time.time() + SESS_TTL))
-    sig = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-    return f"{exp}.{sig}"
+    payload = f"{role}.{exp}"
+    sig = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
 
-def valid_session(token):
+def session_role(token):
+    """返回 'admin' / 'guest'(访客);无效或过期返回 None。"""
     try:
-        exp, sig = str(token).split(".", 1)
-        good = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and time.time() < float(exp)
+        role, exp, sig = str(token).split(".", 2)
+        good = hmac.new(_secret(), f"{role}.{exp}".encode(), hashlib.sha256).hexdigest()
+        if role in ("admin", "guest") and hmac.compare_digest(sig, good) and time.time() < float(exp):
+            return role
     except Exception:
-        return False
+        pass
+    return None
 
 class H(BaseHTTPRequestHandler):
     server_version = "pearl-dash"
@@ -722,8 +726,11 @@ class H(BaseHTTPRequestHandler):
                 return part.split("=", 1)[1]
         return ""
 
+    def _role(self):
+        return session_role(self._cookie_token())
+
     def _authed(self):
-        return valid_session(self._cookie_token())
+        return self._role() is not None
 
     def _send(self, code, body, ctype="application/json", extra=None):
         if isinstance(body, (dict, list)):
@@ -750,12 +757,18 @@ class H(BaseHTTPRequestHandler):
         if path == "/":
             return self._send(200, HTML, "text/html")
         if path.startswith("/api/"):
-            if not self._authed():
+            role = self._role()
+            if not role:
                 return self._send(401, {"error": "unauthorized"})
+            if path == "/api/me":
+                return self._send(200, {"role": role, "user": "admin" if role == "admin" else "访客"})
             if path == "/api/summary":
                 return self._send(200, build_summary())
             if path == "/api/rentals":
                 return self._send(200, build_rentals())
+            # ↓ 以下仅管理员;访客(guest)只能看总览数据与工具链接
+            if role != "admin":
+                return self._send(403, {"error": "forbidden"})
             if path == "/api/config":
                 return self._send(200, build_config())
             if path == "/api/full-config":
@@ -773,14 +786,22 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         data = self._body_json()
         if path == "/login":
+            if data.get("guest"):
+                tok = new_session("guest")
+                return self._send(200, {"ok": True, "role": "guest"}, extra={
+                    "Set-Cookie": f"sniper_session={tok}; Path=/; Max-Age={SESS_TTL}; HttpOnly; SameSite=Lax"})
             ok = hmac.compare_digest(str(data.get("password", "")), str(CONF.get("password", "")))
             if not ok:
                 return self._send(401, {"error": "密码错误"})
-            tok = new_session()
-            return self._send(200, {"ok": True}, extra={
+            tok = new_session("admin")
+            return self._send(200, {"ok": True, "role": "admin"}, extra={
                 "Set-Cookie": f"sniper_session={tok}; Path=/; Max-Age={SESS_TTL}; HttpOnly; SameSite=Lax"})
-        if not self._authed():
-            return self._send(401, {"error": "unauthorized"})
+        if path == "/logout":
+            return self._send(200, {"ok": True}, extra={
+                "Set-Cookie": "sniper_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+        # 以下写操作仅管理员;访客一律拒绝
+        if self._role() != "admin":
+            return self._send(401 if not self._authed() else 403, {"error": "forbidden"})
         if path == "/api/key":
             plat = str(data.get("platform", ""))
             value = str(data.get("value", "")).strip()
@@ -813,7 +834,9 @@ class H(BaseHTTPRequestHandler):
 
 HTML = r"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>今晚挖珍珠 // PEARL_SNIPER</title>
+<title>今晚挖珍珠 · Pearl Sniper</title>
+<meta name=theme-color content="#0a0e17">
+<link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'><defs><radialGradient%20id='g'%20cx='37%25'%20cy='31%25'%20r='78%25'><stop%20offset='0%25'%20stop-color='%23f2fffc'/><stop%20offset='17%25'%20stop-color='%238ff3e6'/><stop%20offset='42%25'%20stop-color='%233fe0c5'/><stop%20offset='71%25'%20stop-color='%231aa6cf'/><stop%20offset='100%25'%20stop-color='%23083f57'/></radialGradient><radialGradient%20id='h'%20cx='50%25'%20cy='50%25'%20r='50%25'><stop%20offset='0%25'%20stop-color='%233fe0c5'%20stop-opacity='0.55'/><stop%20offset='100%25'%20stop-color='%233fe0c5'%20stop-opacity='0'/></radialGradient></defs><rect%20width='64'%20height='64'%20rx='15'%20fill='%230a0e17'/><circle%20cx='32'%20cy='32'%20r='27'%20fill='url(%23h)'/><circle%20cx='32'%20cy='32'%20r='17'%20fill='url(%23g)'/><ellipse%20cx='25.5'%20cy='24'%20rx='6.5'%20ry='4.6'%20fill='%23ffffff'%20opacity='0.92'/></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap');
 :root{--bg:#0a0e17;--bg2:#0f1623;--card:#141b2b;--card2:#172033;--bd:#23304a;--bd2:#33415f;
@@ -863,6 +886,10 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
 button:hover{border-color:var(--g2);color:var(--hi);background:rgba(63,224,197,.06)}
 .b-acc{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;box-shadow:0 6px 18px -8px rgba(63,224,197,.55)}.b-acc:hover{color:#06121a;filter:brightness(1.06)}
+.peek{margin-top:13px;text-align:center;color:var(--mut);font-size:11.5px;letter-spacing:.4px;font-family:var(--mono);cursor:pointer;padding:8px;border-top:1px solid var(--bd);transition:.14s}
+.peek:hover{color:var(--acc)}
+.logout{margin-top:9px;color:var(--mut);font-size:11px;font-family:var(--mono);cursor:pointer;letter-spacing:.4px;display:inline-flex;align-items:center;gap:5px;transition:.14s}
+.logout:hover{color:var(--bad)}
 .b-warn{background:var(--warnbg);color:var(--warn);border-color:rgba(255,178,89,.4)}.b-warn:hover{color:var(--warn);border-color:var(--warn)}
 .b-bad{background:var(--badbg);color:var(--bad);border-color:rgba(255,122,122,.35);padding:6px 12px;font-size:11.5px}.b-bad:hover{color:var(--bad);border-color:var(--bad)}
 input,textarea{background:#0c1320;border:1px solid var(--bd2);color:var(--hi);border-radius:9px;padding:9px 11px;font-size:12px;font-family:inherit;width:100%;outline:none;transition:.14s}
@@ -888,8 +915,17 @@ summary:hover{color:var(--acc)}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:flex;min-height:100vh}
 .side{width:210px;flex-shrink:0;background:rgba(15,22,35,.55);border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
-.sbrand{font-weight:800;font-size:15px;line-height:1.3;margin-bottom:24px;background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.sbrand span{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);-webkit-text-fill-color:var(--mut);font-weight:600;margin-top:4px;font-family:var(--mono)}
+.sbrand{display:flex;align-items:center;gap:11px;margin-bottom:24px}
+.sbrand .bt{font-weight:800;font-size:15.5px;line-height:1.2;color:var(--hi)}
+.sbrand .bt small{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);font-weight:600;margin-top:4px;font-family:var(--mono)}
+.pg{background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-style:normal}
+.orb{position:relative;border-radius:50%;flex-shrink:0;
+background:radial-gradient(circle at 37% 31%,#f2fffc 0%,#8ff3e6 17%,#3fe0c5 42%,#1aa6cf 71%,#083f57 100%);
+box-shadow:0 0 0 1px rgba(143,243,230,.22),0 0 12px 1px rgba(63,224,197,.55),0 0 26px 5px rgba(63,224,197,.22),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.3);
+animation:orbglow 3.4s ease-in-out infinite}
+.orb::after{content:"";position:absolute;top:13%;left:19%;width:36%;height:28%;border-radius:50%;
+background:radial-gradient(circle,rgba(255,255,255,.95),rgba(255,255,255,0) 70%)}
+@keyframes orbglow{0%,100%{box-shadow:0 0 0 1px rgba(143,243,230,.22),0 0 12px 1px rgba(63,224,197,.5),0 0 24px 4px rgba(63,224,197,.18),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.3)}50%{box-shadow:0 0 0 1px rgba(143,243,230,.3),0 0 16px 2px rgba(63,224,197,.7),0 0 34px 7px rgba(63,224,197,.3),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.34)}}
 .nav{display:flex;flex-direction:column;gap:2px}
 .ni{padding:9px 13px;border-radius:9px;cursor:pointer;color:var(--mut);font-weight:600;font-size:13px;letter-spacing:.3px;transition:.14s}
 .ni:hover{color:var(--hi);background:rgba(255,255,255,.04)}
@@ -916,33 +952,42 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
 <div id=login style=display:none><div class=box>
-<div class=logo>// PEARL_SNIPER v1</div>
-<h2>今晚挖珍珠</h2><div class=sub>PEARL SNIPER DASHBOARD</div>
+<div style="display:flex;align-items:center;gap:13px;margin-bottom:14px">
+<span class=orb style="width:42px;height:42px"></span>
+<div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0">今晚挖<i class=pg>珍珠</i></h2></div></div>
+<div class=sub>PEARL SNIPER DASHBOARD</div>
 <input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
 <div class=err id=lerr></div>
-<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button></div></div>
+<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button>
+<div class=peek onclick=guestLogin()>👁 偷窥模式 · 仅看总览 / PEEK MODE</div></div></div>
 
 <div class=app>
 <aside class=side>
-<div class=sbrand>🦪 今晚挖珍珠<span>PEARL SNIPER v1</span></div>
+<div class=sbrand><span class=orb style="width:26px;height:26px"></span><span class=bt>今晚挖<i class=pg>珍珠</i><small>PEARL SNIPER v1</small></span></div>
 <nav class=nav>
 <div class="ni on" data-nav=ov onclick="nav('ov')">总览</div>
 <div class="ni" data-nav=lk onclick="nav('lk')">工具链接</div>
-<div class=nigrp>配置</div>
-<div class="ni sub" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
-<div class="ni sub" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
-<div class="ni sub" data-nav=cf:runpod onclick="nav('cf:runpod')">RUNPOD</div>
-<div class="ni sub" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
-<div class="ni sub" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
+<div class="nigrp adm">配置</div>
+<div class="ni sub adm" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
+<div class="ni sub adm" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
+<div class="ni sub adm" data-nav=cf:runpod onclick="nav('cf:runpod')">RUNPOD</div>
+<div class="ni sub adm" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
+<div class="ni sub adm" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
 </nav>
-<div class=sfoot><div class=suser><span class=dot></span>admin</div><div id=clock></div></div>
+<div class=sfoot><div class=suser><span class=dot></span><span id=uname>admin</span></div><div id=clock></div>
+<div class=logout onclick=logout()>⏏ 退出登录</div></div>
 </aside>
 <main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=cf style=display:none></div></div></main>
 </div>
 <div class=toast id=toast></div>
 
 <script>
-let view='ov',subtab='common';
+let view='ov',subtab='common',ROLE='admin';
+function applyRole(){let adm=ROLE=='admin';
+document.querySelectorAll('.adm').forEach(e=>e.style.display=adm?'':'none');
+let u=document.getElementById('uname');if(u)u.textContent=adm?'admin':'访客 GUEST';
+let dot=document.querySelector('.suser .dot');if(dot)dot.style.background=adm?'var(--g2)':'var(--warn)';
+if(!adm&&view=='cf'){nav('ov');}}
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2600);}
 function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else{view='cf';subtab=t.split(':')[1];}
 document.querySelectorAll('.ni').forEach(e=>e.classList.toggle('on',e.dataset.nav==t));
@@ -951,9 +996,14 @@ document.getElementById('lk').style.display=view=='lk'?'':'none';
 document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
 function copyAddr(a){(navigator.clipboard?navigator.clipboard.writeText(a):Promise.reject()).then(()=>toast('钱包地址已复制')).catch(()=>toast('复制失败, 请手动选中'));}
 async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}document.getElementById('login').style.display='none';return r.json();}
+function afterAuth(role){ROLE=role||'admin';document.getElementById('login').style.display='none';if(ROLE!='admin'&&view=='cf')view='ov';applyRole();refresh();}
 async function login(){const pw=document.getElementById('pw').value;
 const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-if(r.ok){document.getElementById('login').style.display='none';refresh();}else{const d=await r.json();document.getElementById('lerr').textContent=d.error||'登录失败';}}
+if(r.ok){const d=await r.json();afterAuth(d.role);}else{const d=await r.json();document.getElementById('lerr').textContent=d.error||'登录失败';}}
+async function guestLogin(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guest:true})});
+if(r.ok){const d=await r.json();afterAuth(d.role||'guest');}}
+async function logout(){try{await fetch('/logout',{method:'POST'});}catch(e){}location.reload();}
+async function initRole(){try{const m=await fetch('/api/me');if(m.ok){const d=await m.json();ROLE=d.role;applyRole();}}catch(e){}}
 function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
@@ -967,7 +1017,7 @@ let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
 let bh;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');bh=`<span class=bal>余额 $${fnum(v.balance,2)}${t?' · '+t:''}</span>`;}else{bh='<span class=bal>余额 —</span>';}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
-let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+let rows=(v.machines||[]).map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
 return `<tr><td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=6 class=muted>无在跑机器</td></tr>`;
@@ -1113,7 +1163,7 @@ c.items.map(it=>`<a class=linkitem href="${esc(it[1])}" target=_blank rel=noopen
 document.getElementById('lk').innerHTML=`<div class=lbl>工具链接 · TOOLS</div><div class=lgrid>${cards}</div>`;}
 function refresh(){if(view=='ov')renderOverview();else if(view=='lk')renderLinks();else renderConfigTab();}
 setInterval(()=>{let c=document.getElementById('clock');if(c)c.textContent=new Date().toLocaleTimeString();},1000);
-setInterval(()=>{if(view=='ov')renderOverview();},10000);refresh();
+setInterval(()=>{if(view=='ov')renderOverview();},10000);initRole();refresh();
 </script></body></html>"""
 
 
