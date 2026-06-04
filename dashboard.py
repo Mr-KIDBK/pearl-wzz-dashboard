@@ -478,7 +478,7 @@ def tick_spend():
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
         now = time.time()
         hourly = 0.0
-        for plat in ["vast", "runpod", "tensordock", "salad"]:
+        for plat in list_accounts():
             for r in active_rentals(plat):
                 try:
                     hourly += float(r.get("price") or 0)
@@ -515,9 +515,10 @@ def build_summary():
         wlist.append({"name": w.get("worker_name"), "th": round(wth, 2), "ip": w.get("ip"),
                       "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
     per_plat, running = {}, 0
-    for plat in PLATFORMS:
-        n = len(active_rentals(plat))
-        per_plat[plat] = n
+    for acct in list_accounts():
+        n = len(active_rentals(acct))
+        plat = platform_of(acct)
+        per_plat[plat] = per_plat.get(plat, 0) + n
         running += n
     stats = read_json(STATS_PATH, {})
     pending = recent = 0.0
@@ -541,52 +542,58 @@ def build_summary():
 def build_rentals():
     now = time.time()
     res = {}
-    for plat in PLATFORMS:
-        cfg = read_config(plat).get(plat, {})
+    for acct in list_accounts():
+        plat = platform_of(acct)
+        cfg = read_config(acct).get(plat, {})
         items = []
-        for r in active_rentals(plat):
+        for r in active_rentals(acct):
             dur = int(now - float(r["created_epoch"])) if r.get("created_epoch") else None
             d = dict(r)
             d["duration_seconds"] = dur
             items.append(d)
-        res[plat] = {
+        res[acct] = {
+            "platform": plat,
+            "account_id": acct,
+            "label": account_label(acct),
             "enabled": cfg.get("enabled"),
             "create_enabled": cfg.get("create_enabled"),
-            "rent_paused": rent_paused(plat),
-            "process_running": pid_for(plat) is not None,
+            "rent_paused": rent_paused(acct),
+            "process_running": pid_for(acct) is not None,
             "thresholds": cfg.get("thresholds"),
             "min_hashrate_th": cfg.get("min_hashrate_th"),
             "machines": items,
         }
-        bal = platform_balance(plat)
+        bal = platform_balance(acct)
         burn = sum(float(m.get("price") or 0) for m in items)
-        res[plat]["balance"] = bal
-        res[plat]["burn_hourly"] = round(burn, 4)
-        res[plat]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
+        res[acct]["balance"] = bal
+        res[acct]["burn_hourly"] = round(burn, 4)
+        res[acct]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
         if plat == "salad":
-            sl = salad_live()
+            sl = salad_live(acct)
             cnts = {}
             for c in (sl.get("counts") or {}).values():
                 for k, v in (c or {}).items():
                     cnts[k] = cnts.get(k, 0) + (v or 0)
-            res[plat]["salad_status"] = cnts
-            res[plat]["salad_error"] = sl.get("error")
-            res[plat]["salad_gpu_classes"] = sl.get("gpu_classes") or []
+            res[acct]["salad_status"] = cnts
+            res[acct]["salad_error"] = sl.get("error")
+            res[acct]["salad_gpu_classes"] = sl.get("gpu_classes") or []
     return res
 
 def build_config():
     env = read_env()
     res = {}
-    for plat in PLATFORMS:
-        kn = KEYNAME[plat]
+    for acct in list_accounts():
+        kn = key_var_for(acct)
         v = env.get(kn, "")
         is_set = bool(v) and not v.startswith("replace_with")
-        res[plat] = {
+        res[acct] = {
+            "platform": platform_of(acct),
+            "label": account_label(acct),
             "key_name": kn,
             "key_set": is_set,
             "key_mask": ("…" + v[-4:]) if (is_set and len(v) >= 4) else ("已设置" if is_set else ""),
-            "process_running": pid_for(plat) is not None,
-            "rent_paused": rent_paused(plat),
+            "process_running": pid_for(acct) is not None,
+            "rent_paused": rent_paused(acct),
         }
     return res
 
@@ -607,16 +614,19 @@ def build_full_config():
     base = read_config(list_accounts()[0]) if list_accounts() else {}
     common = {k: base.get(k) for k in COMMON_KEYS}
     plats = {}
-    for plat in PLATFORMS:
-        cfg = read_config(plat)
+    for acct in list_accounts():
+        plat = platform_of(acct)
+        cfg = read_config(acct)
         sub = cfg.get(plat, {}) or {}
-        kn = KEYNAME[plat]
+        kn = key_var_for(acct)
         v = env.get(kn, "")
         is_set = bool(v) and not v.startswith("replace_with")
         spec = []
         for key, typ in SPECIFIC[plat]:
             spec.append({"key": key, "type": typ, "value": sub.get(key)})
-        plats[plat] = {
+        plats[acct] = {
+            "platform": plat,
+            "label": account_label(acct),
             "enabled": bool(sub.get("enabled")),
             "has_create": plat in HAS_CREATE,
             "create_enabled": bool(sub.get("create_enabled")),
@@ -626,8 +636,8 @@ def build_full_config():
             "key_name": kn,
             "key_set": is_set,
             "key_mask": ("…" + v[-4:]) if (is_set and len(v) >= 4) else "",
-            "process_running": pid_for(plat) is not None,
-            "rent_paused": rent_paused(plat),
+            "process_running": pid_for(acct) is not None,
+            "rent_paused": rent_paused(acct),
             "raw": json.dumps(cfg, ensure_ascii=False, indent=2),
         }
     return {"common": common, "platforms": plats}
