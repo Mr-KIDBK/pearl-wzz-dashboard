@@ -240,6 +240,22 @@ def salad_live():
             d = salad_get(pre, key)
             names = [g.get("name") for g in (d.get("items") or [])]
         watch = read_state("salad").get("salad_instance_watch") or {}
+        # 矿池侧: salad worker 名 = <prefix>-salad-<machine_id>, gpu_info 带真实卡型
+        pool = pool_data()
+        pool_workers = (pool.get("connected_workers") or []) if isinstance(pool, dict) else []
+        def pool_match(mid):
+            if not mid:
+                return None
+            for w in pool_workers:
+                if mid in str(w.get("worker_name") or ""):
+                    return w
+            return None
+        def pgpu(w):
+            gi = (w or {}).get("gpu_info") or []
+            return str((gi[0] if gi else {}).get("name") or "").replace("NVIDIA GeForce ", "").strip()
+        def phr(w):
+            gi = (w or {}).get("gpu_info") or []
+            return round(sum(hashrate_th(g.get("hashrate")) for g in gi), 2) if gi else None
         prices = []
         for nm in names:
             prio = "medium"
@@ -261,16 +277,35 @@ def salad_live():
                     prices += ps
             except Exception:
                 pass
-            d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
-            for inst in (d.get("instances") or []):
+            insts = []
+            try:
+                d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
+                insts = d.get("instances") or []
+            except Exception as ie:
+                res["error"] = f"instances: {type(ie).__name__}: {ie}"
+            for inst in insts:
                 iid = str(inst.get("instance_id") or inst.get("id") or "")
+                mid = str(inst.get("machine_id") or "")
                 w = watch.get(f"{nm}:{iid}") or {}
-                res["instances"].append({"id": iid, "machine_id": inst.get("machine_id"),
-                                         "gpu": (w.get("gpu") or "").strip() or "?", "group": nm,
+                pw = pool_match(mid)
+                gpu = pgpu(pw) or (w.get("gpu") or "").strip() or "?"
+                hr = w.get("last_hashrate_th")
+                if hr is None:
+                    hr = phr(pw)
+                res["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
-                                         "price_label": label,
-                                         "hashrate_th": w.get("last_hashrate_th")})
+                                         "price_label": label, "hashrate_th": hr})
+            if not insts:  # /instances 失败/为空时, 用矿池 salad worker 兜底显示
+                for w in pool_workers:
+                    wn = str(w.get("worker_name") or "")
+                    if "salad" not in wn:
+                        continue
+                    mm = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", wn)
+                    mid = mm.group(0) if mm else wn
+                    res["instances"].append({"id": mid, "machine_id": mid, "gpu": pgpu(w) or "?",
+                                             "group": nm, "state": "running", "started_epoch": None,
+                                             "price_label": label, "hashrate_th": phr(w)})
         if prices:
             lo, hi = min(prices), max(prices)
             res["price_label"] = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
@@ -832,7 +867,7 @@ let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  �
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
-let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc)+'(Salad API 无单实例卡型)':''}${v.salad_error?' · '+esc(v.salad_error):''}</div>`;}
+let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
 let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
