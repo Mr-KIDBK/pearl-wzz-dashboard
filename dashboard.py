@@ -952,7 +952,7 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
 <div id=login style=display:none><div class=box>
-<div style="display:flex;align-items:center;gap:13px;margin-bottom:14px">
+<div style="display:flex;align-items:center;gap:18px;margin-bottom:14px">
 <span class=orb style="width:42px;height:42px"></span>
 <div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0">今晚挖<i class=pg>珍珠</i></h2></div></div>
 <div class=sub>PEARL SNIPER DASHBOARD</div>
