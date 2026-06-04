@@ -21,7 +21,7 @@
 只有**一个配置文件 `.env`**(平台 API key + 看板登录都在里面),**一条命令起 / 停全部服务**。
 
 ```bash
-# 0. 依赖: Python 3.10+(纯标准库) + byobu(起停脚本用)。 缺则: apt install byobu
+# 0. 依赖: 只需 Python 3.10+(纯标准库,无需 pip,也不需要 byobu)
 
 # 1. 复制模板(真实文件已被 .gitignore 保护)
 cp .env.example .env

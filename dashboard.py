@@ -782,7 +782,7 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .logbox::-webkit-scrollbar{width:9px;height:9px}.logbox::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:6px}
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
-<div id=login><div class=box>
+<div id=login style=display:none><div class=box>
 <div class=logo>// PEARL_SNIPER v1</div>
 <h2>今晚挖珍珠</h2><div class=sub>PEARL SNIPER DASHBOARD</div>
 <input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
@@ -817,7 +817,7 @@ document.getElementById('ov').style.display=view=='ov'?'':'none';
 document.getElementById('lk').style.display=view=='lk'?'':'none';
 document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
 function copyAddr(a){(navigator.clipboard?navigator.clipboard.writeText(a):Promise.reject()).then(()=>toast('钱包地址已复制')).catch(()=>toast('复制失败, 请手动选中'));}
-async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}return r.json();}
+async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}document.getElementById('login').style.display='none';return r.json();}
 async function login(){const pw=document.getElementById('pw').value;
 const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
 if(r.ok){document.getElementById('login').style.display='none';refresh();}else{const d=await r.json();document.getElementById('lerr').textContent=d.error||'登录失败';}}

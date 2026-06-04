@@ -1,53 +1,42 @@
 #!/usr/bin/env bash
-# 在 byobu 会话里开窗口, 分别 live 抢 vast / runpod / tensordock (+ salad 若启用)
+# 一条命令后台启动全部服务: 4 平台 sniper + 网页看板。无需 byobu, 输出到 logs/。
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
-SESSION="${SNIPER_SESSION:-sniper}"
-
-command -v byobu >/dev/null 2>&1 || { echo "byobu 未安装" >&2; exit 1; }
-
-if byobu has-session -t "$SESSION" 2>/dev/null; then
-  echo "会话 '$SESSION' 已存在。"
-  echo "  附加: byobu attach -t $SESSION"
-  echo "  重建: byobu kill-session -t $SESSION && $0"
-  exit 0
-fi
 mkdir -p logs
+set -a; [ -f .env ] && . ./.env; set +a
 
-VAST="SNIPER_LOG_PATH=logs/vast.log SNIPER_STATE_PATH=state.vast.json bash scripts/run-vast.sh --live"
-RUNPOD="SNIPER_LOG_PATH=logs/runpod.log SNIPER_STATE_PATH=state.runpod.json bash scripts/run-runpod.sh --live"
-TENSORDOCK="SNIPER_LOG_PATH=logs/tensordock.log SNIPER_STATE_PATH=state.tensordock.json bash scripts/run-tensordock.sh --live"
-SALAD="SNIPER_LOG_PATH=logs/salad.log SNIPER_STATE_PATH=state.salad.json bash scripts/run-salad.sh --live"
-DASHBOARD="bash scripts/run-dashboard.sh"
-
-# 进程退出后保留窗口为交互 shell, 方便看最后日志 / 按 ↑ 重跑
-wrap() { printf "cd %q; %s; ec=\$?; echo; echo \"[exited code=\$ec] 窗口保留, 按 ↑ 重跑\"; exec bash" "$ROOT" "$1"; }
-
-# Salad 仅在 config.salad.json 里 salad.enabled=true 时才开窗口(默认休眠则跳过)
-salad_enabled=false
-if [ -f configs/config.salad.json ]; then
-  if python3 -c "import json,sys; sys.exit(0 if json.load(open('configs/config.salad.json')).get('salad',{}).get('enabled') else 1)" 2>/dev/null; then
-    salad_enabled=true
+start_sniper() {  # $1 = 平台名
+  local name="$1"
+  if pgrep -f "config.${name}.json" >/dev/null 2>&1; then
+    echo "  ⏭  ${name} 已在运行, 跳过"; return
   fi
+  SNIPER_LOG_PATH="logs/${name}.log" SNIPER_STATE_PATH="state.${name}.json" \
+    nohup bash "scripts/run-${name}.sh" --live >/dev/null 2>>"logs/${name}.log" </dev/null &
+  echo "  ✅ ${name} 启动 (pid $!) → logs/${name}.log"
+}
+
+echo "启动平台 sniper(live 抢卡):"
+for p in vast runpod tensordock; do start_sniper "$p"; done
+
+# Salad 仅在 config.salad.json 的 salad.enabled=true 时启动
+if [ -f configs/config.salad.json ] && \
+   python3 -c "import json,sys;sys.exit(0 if json.load(open('configs/config.salad.json')).get('salad',{}).get('enabled') else 1)" 2>/dev/null; then
+  start_sniper salad
+else
+  echo "  ⏭  salad 未启用(config.salad.json 的 salad.enabled=false), 跳过"
 fi
 
-byobu new-session -d -s "$SESSION" -n vast       "$(wrap "$VAST")"
-byobu new-window     -t "$SESSION" -n runpod     "$(wrap "$RUNPOD")"
-byobu new-window     -t "$SESSION" -n tensordock "$(wrap "$TENSORDOCK")"
-started="vast / runpod / tensordock"
-if [ "$salad_enabled" = true ]; then
-  byobu new-window   -t "$SESSION" -n salad      "$(wrap "$SALAD")"
-  started="$started / salad"
+echo "启动网页看板:"
+if pgrep -f "python3 dashboard.py" >/dev/null 2>&1; then
+  echo "  ⏭  dashboard 已在运行"
+else
+  nohup bash scripts/run-dashboard.sh >>logs/dashboard.log 2>&1 </dev/null &
+  echo "  ✅ dashboard 启动 (pid $!) → logs/dashboard.log"
 fi
-byobu new-window     -t "$SESSION" -n dashboard  "$(wrap "$DASHBOARD")"
-started="$started + 网页看板"
-byobu select-window  -t "$SESSION:vast"
 
 PORT="$(grep -E '^DASHBOARD_PORT=' .env 2>/dev/null | cut -d= -f2)"; PORT="${PORT:-8787}"
-echo "✅ 已在 byobu 会话 '$SESSION' 启动全部服务 ($started)"
-[ "$salad_enabled" = false ] && echo "   (salad 未启用: config.salad.json 的 salad.enabled=false, 已跳过)"
-echo "   网页看板: http://<本机IP>:$PORT  (登录 admin / .env 里的 DASHBOARD_PASSWORD)"
 echo
-echo "  附加查看:  byobu attach -t $SESSION   (F3/F4 切窗口, F6 脱离)"
-echo "  全部停止:  bash scripts/stop-all.sh"
+echo "✅ 全部启动完成。"
+echo "   网页看板: http://<本机IP>:${PORT}  (登录 admin / .env 里的 DASHBOARD_PASSWORD)"
+echo "   看日志:   tail -f logs/<平台>.log   或在看板「配置」页点「查看后台日志」"
+echo "   全部停止: bash scripts/stop-all.sh"
