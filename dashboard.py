@@ -1001,10 +1001,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 <div class="ni" data-nav=lk onclick="nav('lk')">工具链接</div>
 <div class=nigrp>配置</div>
 <div class="ni sub" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
-<div class="ni sub" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
-<div class="ni sub" data-nav=cf:runpod onclick="nav('cf:runpod')">RUNPOD</div>
-<div class="ni sub" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
-<div class="ni sub" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
+<div id=cfaccts></div>
 </nav>
 <div class=sfoot><div class=suser><span class=dot></span>admin</div><div id=clock></div></div>
 </aside>
@@ -1034,15 +1031,15 @@ let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
-let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
+let plat='';for(const aid of Object.keys(r)){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
 let bh;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');bh=`<span class=bal>余额 $${fnum(v.balance,2)}${t?' · '+t:''}</span>`;}else{bh='<span class=bal>余额 —</span>';}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
-let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
 return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
-plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()}</b>${badges}${bh}</div>${sstat}
+plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()} · ${esc(v.label||aid)}</b>${badges}${bh}</div>${sstat}
 <table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
@@ -1062,6 +1059,8 @@ document.getElementById('ov').innerHTML=`
 
 let CFG=null;
 async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch(e){return}CFG=d;
+let nv=Object.keys(d.platforms).map(a=>`<div class="ni sub${subtab==a?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc(d.platforms[a].label||a)}</div>`).join('');
+let ce=document.getElementById('cfaccts');if(ce)ce.innerHTML=nv;
 document.getElementById('cf').innerHTML=subtab=='common'?commonHtml(d):platformHtml(d.platforms[subtab],subtab);}
 function commonHtml(d){let c=d.common;
 let cf=(k,label,req,ph)=>`<div class=fld>${label}${req?' <span class=req>必填</span>':''}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;
@@ -1089,8 +1088,8 @@ let key=v.key_set?`<span class="pill ok">已设置 ${esc(v.key_mask)}</span>`:'<
 let gpus=(v.gpus||[]).map((g,i)=>gpuRowHtml(p,i,g)).join('');
 let spec=(v.specific||[]).map(s=>specHtml(p,s)).join('');
 let rentBtn=v.rent_paused?`<button class=b-acc onclick="toggle('${p}',false)">▶ 启动租用</button>`:`<button class=b-warn onclick="toggle('${p}',true)">⏸ 暂停租用</button>`;
-return `<div class=lbl>${p.toUpperCase()} · 平台配置</div>
-<div class=platbox id=box_${p}><div class=top><b>${p.toUpperCase()}</b>${proc}</div>
+return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
+<div class=platbox id=box_${p}><div class=top><b>${esc(v.label||p)}</b>${proc}</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
@@ -1166,9 +1165,9 @@ async function savekey(p){const el=document.getElementById('k_'+p);const val=el.
 let r=await api('/api/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,value:val})});
 el.value='';toast(r.ok?(p+' API key 已保存'):'失败');renderConfigTab();}
 async function toggle(p,paused){await api('/api/rent-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,paused:paused})});renderConfigTab();}
-async function term(p,id,group){let label=p=='salad'?'迁移(reallocate)':'关闭并销毁';
-if(!confirm('确定要'+label+'这台机器吗?\n'+p+' · '+id))return;
-let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,id:id,group:group})});
+async function term(aid,plat,id,group){let label=plat=='salad'?'迁移(reallocate)':'关闭并销毁';
+if(!confirm('确定要'+label+'这台机器吗?\n'+aid+' · '+id))return;
+let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,id:id,group:group})});
 toast(r.error?('失败: '+r.error):'已执行 '+id);renderOverview();}
 const LINKS=[
 {t:'官网',i:'🌐',items:[['Pearl Research','https://pearlresearch.ai/']]},
