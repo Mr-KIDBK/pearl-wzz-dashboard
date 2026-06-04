@@ -119,6 +119,25 @@ def set_dashboard_password(newpw):
     CONF["password"] = newpw
     return {"ok": True}
 
+def tail_log(plat, lines=300):
+    p = ROOT / f"logs/{plat}.log"
+    if not p.exists():
+        return f"(日志文件不存在: logs/{plat}.log;该平台可能还没启动过)"
+    try:
+        lines = max(1, min(int(lines), 2000))
+        with open(p, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            block = min(size, max(8000, lines * 220))
+            f.seek(size - block)
+            data = f.read().decode("utf-8", "replace")
+        rows = data.splitlines()
+        if size > block and rows:
+            rows = rows[1:]  # 丢掉可能被截断的首行
+        return "\n".join(rows[-lines:]) or "(日志为空)"
+    except Exception as e:
+        return f"(读取失败: {type(e).__name__}: {e})"
+
 def hashrate_th(raw):
     try:
         return float(raw) / 1e12
@@ -594,6 +613,13 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, build_config())
             if path == "/api/full-config":
                 return self._send(200, build_full_config())
+            if path == "/api/logs":
+                q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                plat = (q.get("platform") or [""])[0]
+                n = (q.get("lines") or ["300"])[0]
+                if plat not in PLATFORMS:
+                    return self._send(400, {"error": "平台无效"})
+                return self._send(200, {"platform": plat, "log": tail_log(plat, n)})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -737,6 +763,9 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .linkitem .nm{font-weight:600;font-size:13px}
 .linkitem .d{color:var(--mut);font-size:10.5px;font-family:var(--mono);white-space:nowrap}
 .linkitem:hover .d{color:var(--acc)}
+.logbox{background:#060a11;border:1px solid var(--bd);border-radius:9px;padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#9fb8cc;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:9px}
+.logbox::-webkit-scrollbar{width:9px;height:9px}.logbox::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:6px}
+select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
 <div id=login><div class=box>
 <div class=logo>// PEARL_SNIPER v1</div>
@@ -861,10 +890,18 @@ ${rentBtn}
 <details><summary>高级 · raw JSON (config.${p}.json 全文)</summary>
 <textarea id="raw_${p}">${esc(v.raw)}</textarea>
 <div class=row style=margin-top:8px><button class=b-acc onclick="saveRaw('${p}')">保存 raw JSON</button><span class=hint>整体覆盖该文件, 写前自动 .bak</span></div></details>
+<hr class=divider>
+<div class=row><button onclick="loadLog('${p}')">📜 查看后台日志</button>
+<select id="loglines_${p}" onchange="loadLog('${p}')"><option value=100>最近 100 行</option><option value=300 selected>最近 300 行</option><option value=500>最近 500 行</option></select>
+<span class=hint>logs/${p}.log · 实时后台输出</span></div>
+<pre class=logbox id="log_${p}" style=display:none></pre>
 </div>`;}
 async function savePw(){let pw=document.getElementById('newpw').value;if(pw.length<4){toast('密码至少 4 位');return;}
 let r=await api('/api/dashboard-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
 document.getElementById('newpw').value='';toast(r.error?('失败: '+r.error):'看板密码已更新');}
+async function loadLog(p){let n=document.getElementById('loglines_'+p).value;let pre=document.getElementById('log_'+p);
+pre.style.display='';pre.textContent='加载中…';
+try{let r=await api('/api/logs?platform='+p+'&lines='+n);pre.textContent=r.log||'(空)';pre.scrollTop=pre.scrollHeight;}catch(e){pre.textContent='加载失败';}}
 
 function gpuRowHtml(p,i,g){return `<div class=gpurow data-gpu>
 <input value="${esc(g.gpu||'')}" placeholder="RTX 4090" data-f=gpu>
