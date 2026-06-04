@@ -35,10 +35,13 @@ SPECIFIC = {
              ("min_reliability", "num"), ("disk_gb", "num"), ("prefer_countries", "list")],
     "runpod": [("cloud_types", "list"), ("country_codes", "list"), ("container_disk_gb", "num"),
                ("create_observed_price_factor", "num"), ("short_exit_blacklist_seconds", "num")],
-    "tensordock": [("city", "str"), ("storage_gb", "num"), ("vcpu_count", "num"),
+    "tensordock": [("excluded_states", "list"), ("storage_gb", "num"), ("vcpu_count", "num"),
                    ("ram_gb", "num"), ("seen_ttl_seconds", "num")],
     "salad": [("organization_name", "str"), ("project_name", "str"), ("include_container_groups", "list"),
-              ("low_efficiency_stop_seconds", "num"), ("reallocate_cooldown_seconds", "num"),
+              ("default_min_hashrate_th", "num"), ("per_model_threshold_enabled", "bool"),
+              ("treat_missing_log_as_zero", "bool"), ("low_efficiency_stop_seconds", "num"),
+              ("reallocate_cooldown_seconds", "num"), ("hashrate_watch_interval_seconds", "num"),
+              ("log_lookback_seconds", "num"), ("missing_worker_as_zero", "bool"),
               ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool")],
 }
 HAS_CREATE = {"runpod", "tensordock"}
@@ -566,11 +569,18 @@ def gpu_rows(sub):
 
 def build_full_config():
     env = read_env()
-    base = read_config("vast")
+    all_cfgs = {plat: read_config(plat) for plat in PLATFORMS}
+    base = all_cfgs["vast"]
     common = {k: base.get(k) for k in COMMON_KEYS}
+    # P2-E: 各 common 字段在 4 平台是否有分歧(供前端提示 + 保存覆盖确认)
+    common_diff = {}
+    for k in COMMON_KEYS:
+        vals = {plat: all_cfgs[plat].get(k) for plat in PLATFORMS}
+        if len({json.dumps(v, ensure_ascii=False, sort_keys=True) for v in vals.values()}) > 1:
+            common_diff[k] = vals
     plats = {}
     for plat in PLATFORMS:
-        cfg = read_config(plat)
+        cfg = all_cfgs[plat]
         sub = cfg.get(plat, {}) or {}
         kn = KEYNAME[plat]
         v = env.get(kn, "")
@@ -592,7 +602,7 @@ def build_full_config():
             "rent_paused": rent_paused(plat),
             "raw": json.dumps(cfg, ensure_ascii=False, indent=2),
         }
-    return {"common": common, "platforms": plats}
+    return {"common": common, "common_diff": common_diff, "platforms": plats}
 
 def backup_and_write(path, obj):
     try:
@@ -891,6 +901,7 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 .platbox .top b{font-size:14px;font-weight:700;letter-spacing:.8px;color:var(--hi)}
 .bal{margin-left:auto;color:var(--mut);font-size:12px;white-space:nowrap;font-family:var(--mono)}
 .req{color:var(--bad);font-size:10px;border:1px solid rgba(255,122,122,.4);background:var(--badbg);border-radius:5px;padding:1px 6px;letter-spacing:.5px}
+.cdiff{color:var(--warn);font-size:10px;border:1px solid rgba(255,178,89,.4);background:var(--warnbg);border-radius:5px;padding:1px 6px;cursor:help}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
 button:hover{border-color:var(--g2);color:var(--hi);background:rgba(63,224,197,.06)}
 .b-acc{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;box-shadow:0 6px 18px -8px rgba(63,224,197,.55)}.b-acc:hover{color:#06121a;filter:brightness(1.06)}
@@ -1050,10 +1061,13 @@ document.getElementById('ov').innerHTML=`
 let CFG=null;
 async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch(e){return}CFG=d;
 document.getElementById('cf').innerHTML=subtab=='common'?commonHtml(d):platformHtml(d.platforms[subtab],subtab);}
-function commonHtml(d){let c=d.common;
-let cf=(k,label,req,ph)=>`<div class=fld>${label}${req?' <span class=req>必填</span>':''}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;
+function commonHtml(d){let c=d.common;let diff=d.common_diff||{};
+let cf=(k,label,req,ph)=>{let w='';
+if(diff[k]){let dv=Object.entries(diff[k]).map(([p,v])=>p+'='+(v==null||v===''?'∅':v)).join('   |   ');
+w=` <span class=cdiff title="${esc(dv)}">⚠ 各平台当前不一致, 保存将统一覆盖</span>`;}
+return `<div class=fld>${label}${req?' <span class=req>必填</span>':''}${w}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;};
 return `<div class=lbl>公共配置 · COMMON</div>
-<div class=platbox><div class=top><b>COMMON</b><span class=muted>改这里会写入全部 4 个 config</span></div>
+<div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
 ${cf('prl_host','矿池 prl_host',0,'84.32.220.219:9000')}
@@ -1141,6 +1155,13 @@ let r=await api('/api/save-platform',{method:'POST',headers:{'Content-Type':'app
 toast(r.error?('保存失败: '+r.error):p+' 配置已保存, 点重启生效');}
 async function saveCommon(){let data={};['prl_address','prl_host','worker_prefix','image','alert_url'].forEach(k=>{let el=document.getElementById('cm_'+k);if(el)data[k]=el.value.trim();});
 ['max_active_instances','max_total_hourly_usd'].forEach(k=>{let n=parseFloat(document.getElementById('cm_'+k).value);if(!isNaN(n))data[k]=n;});
+// P2-E: 若有字段当前各平台不一致, 覆盖前确认
+let diff=(CFG&&CFG.common_diff)||{};let clash=Object.keys(data).filter(k=>diff[k]);
+if(clash.length){let detail=clash.map(k=>{
+let perp=Object.entries(diff[k]).map(([p,v])=>'    '+p+': '+(v==null||v===''?'(空)':v)).join('\n');
+let nv=(data[k]===''||data[k]==null)?'(空)':data[k];
+return '• '+k+'  → 4 平台统一为: '+nv+'\n'+perp;}).join('\n\n');
+if(!confirm('以下字段当前各平台不一致，保存公共配置会把 4 个平台覆盖成同一值:\n\n'+detail+'\n\n确定覆盖？')) return;}
 let r=await api('/api/save-common',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:data})});
 toast(r.error?('失败: '+r.error):'公共配置已写入全部 config, 各平台点重启生效');}
 async function saveRaw(p){let raw=document.getElementById('raw_'+p).value;
