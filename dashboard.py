@@ -549,12 +549,20 @@ def build_config():
 def gpu_rows(sub):
     th = sub.get("thresholds") or {}
     mh = sub.get("min_hashrate_th") or {}
-    names = []
+    # 按"去掉冗余 GeForce 前缀"后的短名归一去重: 即使某型号只有全称 key
+    # (如 NVIDIA GeForce RTX 5090) 也能展示, 保存时不会被空表覆盖丢失(P1-A)。
+    rows = {}
     for k in list(th) + list(mh):
-        if "GeForce" in k or k in names:
-            continue
-        names.append(k)
-    return [{"gpu": n, "max_price": th.get(n), "min_hashrate": mh.get(n)} for n in names]
+        short = k.replace("NVIDIA GeForce ", "").strip()
+        norm = short.upper()
+        r = rows.setdefault(norm, {"gpu": short, "max_price": None, "min_hashrate": None})
+        if "GeForce" not in k:
+            r["gpu"] = short  # 展示优先用不带 GeForce 的短名
+        if r["max_price"] is None and th.get(k) is not None:
+            r["max_price"] = th.get(k)
+        if r["min_hashrate"] is None and mh.get(k) is not None:
+            r["min_hashrate"] = mh.get(k)
+    return list(rows.values())
 
 def build_full_config():
     env = read_env()
