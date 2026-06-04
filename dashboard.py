@@ -58,16 +58,15 @@ def list_accounts():
     return sorted(out, key=lambda a: (platform_of(a), a))
 
 def account_label(account_id):
-    """卡片标题标签: config 的 account_label 优先; 否则 账号<N>[· org]。"""
+    """卡片/侧栏标签: 平台-标识(标识 = 自定义 account_label / salad 的 org / 账号序号)。"""
     plat = platform_of(account_id)
     cfg = read_config(account_id)
-    lbl = cfg.get("account_label")
-    if lbl:
-        return str(lbl)
+    custom = cfg.get("account_label")
+    org = (cfg.get(plat, {}) or {}).get("organization_name")
     m = re.search(r"-(\d+)$", account_id)
     n = m.group(1) if m else "1"
-    org = (cfg.get(plat, {}) or {}).get("organization_name")
-    return f"账号{n} · {org}" if org else f"账号{n}"
+    ident = custom or org or f"账号{n}"
+    return f"{plat}-{ident}"
 
 def key_var_for(account_id):
     """该账号 API key 的 .env 变量名: config.api_key_env 优先, 否则平台标准名。"""
@@ -1039,7 +1038,7 @@ let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term(
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
 return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
-plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()} · ${esc(v.label||aid)}</b>${badges}${bh}</div>${sstat}
+plat+=`<div class=platbox><div class=top><b>${esc(v.label||aid)}</b>${badges}${bh}</div>${sstat}
 <table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
