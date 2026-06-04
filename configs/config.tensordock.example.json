@@ -1,0 +1,91 @@
+{
+  "image": "docker.io/kuzigmgm/pearl-miner:v11",
+  "max_active_instances": 1,
+  "max_total_hourly_usd": 1.0,
+  "poll_seconds": 10,
+  "prl_address": "prl1REPLACE_WITH_YOUR_OWN_WALLET_ADDRESS",
+  "prl_host": "84.32.220.219:9000",
+  "provider_intervals_seconds": {
+    "vast": 10,
+    "runpod": 10,
+    "tensordock": 2
+  },
+  "worker_prefix": "auto",
+  "alert_url": "",
+  "vast": {
+    "enabled": false
+  },
+  "runpod": {
+    "enabled": false,
+    "create_enabled": false
+  },
+  "tensordock": {
+    "enabled": true,
+    "create_enabled": true,
+    "base_url": "https://dashboard.tensordock.com/api/v2",
+    "image": "ubuntu2404",
+    "vcpu_count": 2,
+    "ram_gb": 4,
+    "storage_gb": 100,
+    "use_dedicated_ip": true,
+    "ssh_key_path": "./keys/tensordock.pub",
+    "ssh_private_key_path": "./keys/tensordock",
+    "ssh_user": "user",
+    "ssh_timeout_seconds": 600,
+    "city": "Dallas",
+    "excluded_states": [],
+    "location_rules": {},
+    "prefer_hostnodes": true,
+    "scan_hostnodes": true,
+    "scan_locations": true,
+    "max_instance_age_starting_seconds": 900,
+    "gpu_slugs": {
+      "RTX 4090": "geforcertx4090-pcie-24gb",
+      "RTX 5090": "geforcertx5090-pcie-32gb",
+      "NVIDIA GeForce RTX 4090": "geforcertx4090-pcie-24gb",
+      "NVIDIA GeForce RTX 5090": "geforcertx5090-pcie-32gb"
+    },
+    "thresholds": {
+      "RTX 4090": 0.4,
+      "RTX 5090": 0.5,
+      "NVIDIA GeForce RTX 4090": 0.4,
+      "NVIDIA GeForce RTX 5090": 0.5
+    },
+    "nvidia_driver_packages": [
+      "nvidia-driver-580-open nvidia-utils-580",
+      "nvidia-driver-595-open nvidia-utils-595"
+    ],
+    "nvidia_driver_packages_by_gpu": {
+      "RTX 5090": [
+        "nvidia-driver-595-open nvidia-utils-595",
+        "nvidia-driver-580-open nvidia-utils-580"
+      ],
+      "RTX 4090": [
+        "nvidia-driver-580-open nvidia-utils-580",
+        "nvidia-driver-570-open nvidia-utils-570"
+      ],
+      "NVIDIA GeForce RTX 4090": [
+        "nvidia-driver-580-open nvidia-utils-580",
+        "nvidia-driver-570-open nvidia-utils-570"
+      ],
+      "NVIDIA GeForce RTX 5090": [
+        "nvidia-driver-595-open nvidia-utils-595",
+        "nvidia-driver-580-open nvidia-utils-580"
+      ]
+    },
+    "hashrate_watch_enabled": true,
+    "hashrate_watch_interval_seconds": 30,
+    "hashrate_zero_recover_seconds": 120,
+    "hashrate_log_tail_lines": 300,
+    "hashrate_grace_seconds": 300,
+    "low_efficiency_stop_seconds": 900,
+    "min_th_per_usd_hour": 334,
+    "min_hashrate_th": {
+      "RTX 5090": 250,
+      "RTX 4090": 220,
+      "NVIDIA GeForce RTX 4090": 220,
+      "NVIDIA GeForce RTX 5090": 250
+    },
+    "seen_ttl_seconds": 1800
+  }
+}

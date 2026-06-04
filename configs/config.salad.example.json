@@ -1,0 +1,59 @@
+{
+  "image": "docker.io/kuzigmgm/pearl-miner:v11",
+  "prl_address": "prl1REPLACE_WITH_YOUR_OWN_WALLET_ADDRESS",
+  "prl_host": "84.32.220.219:9000",
+  "worker_prefix": "auto",
+  "alert_url": "",
+  "max_active_instances": 1,
+  "max_total_hourly_usd": 1.0,
+  "poll_seconds": 10,
+  "provider_intervals_seconds": {
+    "vast": 10,
+    "runpod": 10,
+    "tensordock": 10,
+    "salad": 30
+  },
+  "vast": {
+    "enabled": false
+  },
+  "runpod": {
+    "enabled": false,
+    "create_enabled": false
+  },
+  "tensordock": {
+    "enabled": false,
+    "create_enabled": false
+  },
+  "salad": {
+    "enabled": true,
+    "observe_enabled": true,
+    "base_url": "https://api.salad.com/api/public",
+    "organization_name": "",
+    "project_name": "",
+    "include_container_groups": [],
+    "exclude_container_groups": [],
+    "hashrate_watch_interval_seconds": 30,
+    "low_efficiency_stop_seconds": 86400,
+    "reallocate_cooldown_seconds": 600,
+    "log_lookback_seconds": 180,
+    "log_page_size": 100,
+    "use_worker_fallback": false,
+    "missing_worker_as_zero": true,
+    "worker_gpu_names": {},
+    "default_min_hashrate_th": 220,
+    "min_hashrate_th": {
+      "RTX 4090": 220,
+      "RTX 5090": 250,
+      "NVIDIA GeForce RTX 4090": 220,
+      "NVIDIA GeForce RTX 5090": 250
+    },
+    "alphapool_worker_api_enabled": false,
+    "alphapool_reallocate_enabled": false,
+    "alphapool_api_base": "https://pearl.alphapool.tech",
+    "alphapool_hashrate_field": "hashrate_live",
+    "alphapool_api_timeout_seconds": 20,
+    "alphapool_min_hashrate_th": 220,
+    "alphapool_monitor_gpu_names": [],
+    "alphapool_missing_worker_as_zero": true
+  }
+}

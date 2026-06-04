@@ -1,0 +1,27 @@
+# === 敏感 / 本地运行数据(勿提交) ===
+.env
+dashboard.conf.json
+keys/
+logs/
+sniper.log
+state.json
+state.*.json
+dashboard-stats.json
+control/
+
+# === 真实平台配置(含你的钱包)— 用 config.*.example.json 起步 ===
+configs/config.vast.json
+configs/config.runpod.json
+configs/config.tensordock.json
+configs/config.salad.json
+
+# === 备份 / 缓存 / 系统 ===
+*.bak
+*.bak.*
+configs.bak.*/
+__pycache__/
+*.pyc
+.DS_Store
+
+# 私有运维笔记(含服务器 IP / 主机名 / 钱包)
+docs/server-ops.md

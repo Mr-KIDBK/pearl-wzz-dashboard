@@ -1,0 +1,72 @@
+{
+  "image": "docker.io/kuzigmgm/pearl-miner:v11",
+  "max_active_instances": 1,
+  "max_total_hourly_usd": 1.0,
+  "poll_seconds": 10,
+  "prl_address": "prl1REPLACE_WITH_YOUR_OWN_WALLET_ADDRESS",
+  "prl_host": "84.32.220.219:9000",
+  "provider_intervals_seconds": {
+    "vast": 10,
+    "runpod": 2,
+    "tensordock": 10
+  },
+  "worker_prefix": "auto",
+  "alert_url": "",
+  "vast": {
+    "enabled": false
+  },
+  "runpod": {
+    "enabled": true,
+    "create_enabled": true,
+    "observe_enabled": true,
+    "cloud_type": "COMMUNITY",
+    "cloud_types": [
+      "COMMUNITY",
+      "SECURE"
+    ],
+    "country_codes": [
+      "US",
+      "CA"
+    ],
+    "unrestricted_country_gpu_keywords": [
+      "4090",
+      "5090"
+    ],
+    "container_disk_gb": 20,
+    "volume_gb": 1,
+    "min_download_mbps": 50,
+    "min_upload_mbps": 20,
+    "min_ram_per_gpu": 8,
+    "min_vcpu_per_gpu": 2,
+    "create_retry_seconds": 20,
+    "observe_no_hit_log_interval_seconds": 300,
+    "observe_error_log_interval_seconds": 300,
+    "thresholds": {
+      "NVIDIA GeForce RTX 4090": 0.4,
+      "NVIDIA GeForce RTX 5090": 0.5,
+      "RTX 4090": 0.4,
+      "RTX 5090": 0.5
+    },
+    "hashrate_watch_interval_seconds": 30,
+    "hashrate_zero_recover_seconds": 120,
+    "hashrate_grace_seconds": 180,
+    "low_efficiency_stop_seconds": 300,
+    "backdate_low_efficiency_for_existing": true,
+    "min_th_per_usd_hour": 334,
+    "min_hashrate_th": {
+      "NVIDIA GeForce RTX 5090": 250,
+      "NVIDIA GeForce RTX 4090": 220,
+      "RTX 4090": 220,
+      "RTX 5090": 250
+    },
+    "create_observed_price_factor": 1.0,
+    "start_ssh": false,
+    "short_exit_blacklist_seconds": 60,
+    "terminal_pod_cleanup_enabled": true,
+    "hashrate_watch_enabled": true
+  },
+  "tensordock": {
+    "enabled": false,
+    "create_enabled": false
+  }
+}
