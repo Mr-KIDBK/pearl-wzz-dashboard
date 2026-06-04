@@ -1154,7 +1154,7 @@ const LINKS=[
 {t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
 {t:'钱包',i:'👛',items:[['Compute Wallet','https://compute.pearlresearch.ai/wallet']]},
 {t:'矿池',i:'⛏️',items:[['PearlHash','http://pearlhash.xyz'],['AlphaPool','https://pearl.alphapool.tech/']]},
-{t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://www.runpod.io/'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
+{t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://runpod.io?ref=9hx2ahkb'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
 {t:'收益计算器',i:'🧮',items:[['Akakay 计算器','https://pearl.akakay.com/'],['Pearl Dashboard','https://pearl-dashboard-pearl.vercel.app/']]},
 ];
 function dom(u){try{return new URL(u).host}catch(e){return u}}
