@@ -10,6 +10,7 @@ import threading
 import subprocess
 import secrets
 import hmac
+import hashlib
 import datetime as dt
 import urllib.request
 import urllib.parse
@@ -49,8 +50,7 @@ def load_conf():
         return {"user": "admin", "password": "123456", "port": 8787}
 
 CONF = load_conf()
-SESSIONS = {}
-SESS_TTL = 86400
+SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
 POOL_TTL = 30.0
 _lock = threading.Lock()
@@ -526,19 +526,21 @@ def do_terminate(plat, mid, group=None):
 
 
 # ---------- HTTP ----------
+def _secret():
+    return hashlib.sha256(("pearl-dash::" + str(CONF.get("password", ""))).encode()).digest()
+
 def new_session():
-    tok = secrets.token_hex(24)
-    SESSIONS[tok] = time.time() + SESS_TTL
-    return tok
+    exp = str(int(time.time() + SESS_TTL))
+    sig = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
 
 def valid_session(token):
-    exp = SESSIONS.get(token)
-    if not exp:
+    try:
+        exp, sig = str(token).split(".", 1)
+        good = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, good) and time.time() < float(exp)
+    except Exception:
         return False
-    if time.time() > exp:
-        SESSIONS.pop(token, None)
-        return False
-    return True
 
 class H(BaseHTTPRequestHandler):
     server_version = "pearl-dash"
@@ -724,20 +726,31 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .inner{width:100%;max-width:1040px}
 .b-mini{padding:7px 12px;font-size:11.5px}
+.suser{color:var(--tx);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.suser .dot{width:7px;height:7px;border-radius:50%;background:var(--g2);box-shadow:0 0 8px var(--g2);flex-shrink:0}
+.lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px}
+.lcard{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--bd);border-radius:13px;padding:16px 18px;box-shadow:0 14px 30px -24px rgba(0,0,0,.8)}
+.lcard h3{margin:0 0 12px;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);display:flex;align-items:center;gap:8px;font-weight:700}
+.linkitem{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--bd);border-radius:9px;margin-bottom:8px;color:var(--tx);text-decoration:none;transition:.14s}
+.linkitem:last-child{margin-bottom:0}
+.linkitem:hover{border-color:var(--g2);background:rgba(63,224,197,.06);color:var(--hi)}
+.linkitem .nm{font-weight:600;font-size:13px}
+.linkitem .d{color:var(--mut);font-size:10.5px;font-family:var(--mono);white-space:nowrap}
+.linkitem:hover .d{color:var(--acc)}
 </style></head><body>
 <div id=login><div class=box>
 <div class=logo>// PEARL_SNIPER v1</div>
 <h2>今晚挖珍珠</h2><div class=sub>PEARL SNIPER DASHBOARD</div>
 <input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
 <div class=err id=lerr></div>
-<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button>
-<div class=muted style="margin-top:14px">user admin · 默认密码改 dashboard.conf.json</div></div></div>
+<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button></div></div>
 
 <div class=app>
 <aside class=side>
 <div class=sbrand>🦪 今晚挖珍珠<span>PEARL SNIPER v1</span></div>
 <nav class=nav>
 <div class="ni on" data-nav=ov onclick="nav('ov')">总览</div>
+<div class="ni" data-nav=lk onclick="nav('lk')">工具链接</div>
 <div class=nigrp>配置</div>
 <div class="ni sub" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
 <div class="ni sub" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
@@ -745,18 +758,20 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 <div class="ni sub" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
 <div class="ni sub" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
 </nav>
-<div class=sfoot id=clock></div>
+<div class=sfoot><div class=suser><span class=dot></span>admin</div><div id=clock></div></div>
 </aside>
-<main><div class=inner><div id=ov></div><div id=cf style=display:none></div></div></main>
+<main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=cf style=display:none></div></div></main>
 </div>
 <div class=toast id=toast></div>
 
 <script>
 let view='ov',subtab='common';
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2600);}
-function nav(t){if(t=='ov'){view='ov';}else{view='cf';subtab=t.split(':')[1];}
+function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else{view='cf';subtab=t.split(':')[1];}
 document.querySelectorAll('.ni').forEach(e=>e.classList.toggle('on',e.dataset.nav==t));
-document.getElementById('ov').style.display=view=='ov'?'':'none';document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
+document.getElementById('ov').style.display=view=='ov'?'':'none';
+document.getElementById('lk').style.display=view=='lk'?'':'none';
+document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
 function copyAddr(a){(navigator.clipboard?navigator.clipboard.writeText(a):Promise.reject()).then(()=>toast('钱包地址已复制')).catch(()=>toast('复制失败, 请手动选中'));}
 async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}return r.json();}
 async function login(){const pw=document.getElementById('pw').value;
@@ -899,7 +914,19 @@ async function term(p,id,group){let label=p=='salad'?'迁移(reallocate)':'关�
 if(!confirm('确定要'+label+'这台机器吗?\n'+p+' · '+id))return;
 let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,id:id,group:group})});
 toast(r.error?('失败: '+r.error):'已执行 '+id);renderOverview();}
-function refresh(){if(view=='ov')renderOverview();else renderConfigTab();}
+const LINKS=[
+{t:'官网',i:'🌐',items:[['Pearl Research','https://pearlresearch.ai/']]},
+{t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
+{t:'钱包',i:'👛',items:[['Compute Wallet','https://compute.pearlresearch.ai/wallet']]},
+{t:'矿池',i:'⛏️',items:[['PearlHash','http://pearlhash.xyz'],['AlphaPool','https://pearl.alphapool.tech/']]},
+{t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://www.runpod.io/'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
+{t:'收益计算器',i:'🧮',items:[['Akakay 计算器','https://pearl.akakay.com/'],['Pearl Dashboard','https://pearl-dashboard-pearl.vercel.app/']]},
+];
+function dom(u){try{return new URL(u).host}catch(e){return u}}
+function renderLinks(){let cards=LINKS.map(c=>`<div class=lcard><h3>${c.i} ${esc(c.t)}</h3>`+
+c.items.map(it=>`<a class=linkitem href="${esc(it[1])}" target=_blank rel=noopener><span class=nm>${esc(it[0])}</span><span class=d>${esc(dom(it[1]))} ↗</span></a>`).join('')+`</div>`).join('');
+document.getElementById('lk').innerHTML=`<div class=lbl>工具链接 · TOOLS</div><div class=lgrid>${cards}</div>`;}
+function refresh(){if(view=='ov')renderOverview();else if(view=='lk')renderLinks();else renderConfigTab();}
 setInterval(()=>{let c=document.getElementById('clock');if(c)c.textContent=new Date().toLocaleTimeString();},1000);
 setInterval(()=>{if(view=='ov')renderOverview();},10000);refresh();
 </script></body></html>"""
