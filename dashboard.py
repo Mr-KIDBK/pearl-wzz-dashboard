@@ -44,10 +44,22 @@ SPECIFIC = {
 HAS_CREATE = {"runpod", "tensordock"}
 
 def load_conf():
+    """看板登录配置从 .env 读(DASHBOARD_USER / DASHBOARD_PASSWORD / DASHBOARD_PORT)。"""
+    e = {}
     try:
-        return json.load(open(ROOT / "dashboard.conf.json"))
+        for line in open(ROOT / ".env"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                e[k.strip()] = v.strip()
     except Exception:
-        return {"user": "admin", "password": "123456", "port": 8787}
+        pass
+    g = lambda k, d: e.get(k) or os.environ.get(k) or d
+    try:
+        port = int(g("DASHBOARD_PORT", 8787))
+    except Exception:
+        port = 8787
+    return {"user": g("DASHBOARD_USER", "admin"), "password": g("DASHBOARD_PASSWORD", "123456"), "port": port}
 
 CONF = load_conf()
 SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
@@ -110,10 +122,8 @@ def set_dashboard_password(newpw):
     newpw = str(newpw or "")
     if len(newpw) < 4:
         return {"error": "密码至少 4 位"}
-    conf = load_conf()
-    conf["password"] = newpw
     try:
-        (ROOT / "dashboard.conf.json").write_text(json.dumps(conf, ensure_ascii=False, indent=2) + "\n")
+        set_env_key("DASHBOARD_PASSWORD", newpw)
     except Exception as e:
         return {"error": f"写入失败: {e}"}
     CONF["password"] = newpw

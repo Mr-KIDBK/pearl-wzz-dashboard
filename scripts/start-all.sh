@@ -19,6 +19,7 @@ VAST="SNIPER_LOG_PATH=logs/vast.log SNIPER_STATE_PATH=state.vast.json bash scrip
 RUNPOD="SNIPER_LOG_PATH=logs/runpod.log SNIPER_STATE_PATH=state.runpod.json bash scripts/run-runpod.sh --live"
 TENSORDOCK="SNIPER_LOG_PATH=logs/tensordock.log SNIPER_STATE_PATH=state.tensordock.json bash scripts/run-tensordock.sh --live"
 SALAD="SNIPER_LOG_PATH=logs/salad.log SNIPER_STATE_PATH=state.salad.json bash scripts/run-salad.sh --live"
+DASHBOARD="bash scripts/run-dashboard.sh"
 
 # 进程退出后保留窗口为交互 shell, 方便看最后日志 / 按 ↑ 重跑
 wrap() { printf "cd %q; %s; ec=\$?; echo; echo \"[exited code=\$ec] 窗口保留, 按 ↑ 重跑\"; exec bash" "$ROOT" "$1"; }
@@ -39,13 +40,14 @@ if [ "$salad_enabled" = true ]; then
   byobu new-window   -t "$SESSION" -n salad      "$(wrap "$SALAD")"
   started="$started / salad"
 fi
+byobu new-window     -t "$SESSION" -n dashboard  "$(wrap "$DASHBOARD")"
+started="$started + 网页看板"
 byobu select-window  -t "$SESSION:vast"
 
-echo "✅ 已在 byobu 会话 '$SESSION' 启动平台 ($started)"
+PORT="$(grep -E '^DASHBOARD_PORT=' .env 2>/dev/null | cut -d= -f2)"; PORT="${PORT:-8787}"
+echo "✅ 已在 byobu 会话 '$SESSION' 启动全部服务 ($started)"
 [ "$salad_enabled" = false ] && echo "   (salad 未启用: config.salad.json 的 salad.enabled=false, 已跳过)"
+echo "   网页看板: http://<本机IP>:$PORT  (登录 admin / .env 里的 DASHBOARD_PASSWORD)"
 echo
-echo "  附加查看:  byobu attach -t $SESSION"
-echo "  切换窗口:  F3 / F4   (或 Ctrl-a n / p)"
-echo "  脱离后台:  F6        (或 Ctrl-a d)"
-echo "  停某平台:  切到窗口按 Ctrl-c"
-echo "  全部停止:  byobu kill-session -t $SESSION"
+echo "  附加查看:  byobu attach -t $SESSION   (F3/F4 切窗口, F6 脱离)"
+echo "  全部停止:  bash scripts/stop-all.sh"

@@ -1,6 +1,5 @@
 # === 敏感 / 本地运行数据(勿提交) ===
 .env
-dashboard.conf.json
 keys/
 logs/
 sniper.log
