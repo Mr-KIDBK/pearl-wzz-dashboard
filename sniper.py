@@ -930,7 +930,7 @@ def reconcile_runpod_instances(config, state):
         for r in state.get("rented", [])
         if r.get("provider") == "runpod" and r.get("active", True)
     }
-    if cfg.get("cleanup_untracked_terminal_pods", True):
+    if cfg.get("cleanup_untracked_terminal_pods", False):  # 默认 false: 不删账号里非本工具创建的 terminal pod
         for pod in pods:
             pod_id = str(pod.get("id") or "")
             if not pod_id or pod_id in tracked_active_ids:
@@ -1896,7 +1896,7 @@ def tensordock_ssh_log(config, host, lines=300):
     try:
         return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=15)
     except Exception:
-        return ""
+        return None  # SSH 取日志失败, 与"日志为空"区分(None=取不到, ""/文本=取到了)
 
 
 def instance_public_ip(inst):
@@ -1960,8 +1960,11 @@ def reconcile_tensordock_instances(config, state):
                 if now_ts - last_check >= int(cfg.get("hashrate_watch_interval_seconds", 30)):
                     rented["hashrate_last_check_epoch"] = now_ts
                     log_text = tensordock_ssh_log(config, host, int(cfg.get("hashrate_log_tail_lines", 300)))
-                    hashrate_th = parse_latest_hashrate(log_text)
-                    if hashrate_th is not None:
+                    if log_text is not None:  # None=SSH取日志失败, 本轮跳过避免误杀
+                        hashrate_th = parse_latest_hashrate(log_text)
+                        if hashrate_th is None:
+                            hashrate_th = 0.0  # SSH 可达且日志取到但无 Hashrate = 矿机没出算力 → 按 0 进低效回收
+                        rented["last_hashrate_th"] = round(hashrate_th, 3)
                         apply_low_efficiency_policy(
                             config,
                             state,

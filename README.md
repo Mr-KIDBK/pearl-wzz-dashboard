@@ -52,7 +52,7 @@ bash scripts/stop-all.sh
 | `prl_address`(4 份 config)| **你自己的 $pearl 钱包**,不改 = 挖给别人 |
 | `.env` 的 API key | 启用平台的(VAST / RUNPOD / TENSORDOCK / SALAD)|
 | `.env` 的 `DASHBOARD_PASSWORD` | 看板登录密码,**默认 `123456`,公网端口务必改掉** |
-| `max_active_instances` / `max_total_hourly_usd` | 花钱护栏,**先设小** |
+| `max_active_instances` / `max_total_hourly_usd` | 花钱护栏,**先设小**(注意:**每平台独立计算**,非全局——4 平台各跑独立进程/独立 state,最坏情况是 `平台数 × 上限`;Salad 受其 group replica 数管,不计入这两项)|
 
 Salad 需在其后台预建 container group(env 填你的钱包)+ `SALAD_API_KEY`;TensorDock 需在 `keys/` 放 SSH 密钥对。
 

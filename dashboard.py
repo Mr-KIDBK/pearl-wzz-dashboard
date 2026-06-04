@@ -43,6 +43,16 @@ SPECIFIC = {
 }
 HAS_CREATE = {"runpod", "tensordock"}
 
+def env_quote(v):
+    """单引号包裹值, 内部 ' 转义为 '\\''; 让 .env 被 shell source 时安全、防注入。"""
+    return "'" + str(v).replace("'", "'\\''") + "'"
+
+def env_unquote(v):
+    v = str(v).strip()
+    if len(v) >= 2 and v.startswith("'") and v.endswith("'"):
+        return v[1:-1].replace("'\\''", "'")
+    return v
+
 def load_conf():
     """看板登录配置从 .env 读(DASHBOARD_USER / DASHBOARD_PASSWORD / DASHBOARD_PORT)。"""
     e = {}
@@ -51,7 +61,7 @@ def load_conf():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
-                e[k.strip()] = v.strip()
+                e[k.strip()] = env_unquote(v.strip())
     except Exception:
         pass
     g = lambda k, d: e.get(k) or os.environ.get(k) or d
@@ -95,7 +105,7 @@ def read_env():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            m[k.strip()] = v.strip()
+            m[k.strip()] = env_unquote(v.strip())
     except Exception:
         pass
     return m
@@ -110,12 +120,12 @@ def set_env_key(name, value):
     for line in lines:
         s = line.strip()
         if s and not s.startswith("#") and "=" in s and s.split("=", 1)[0].strip() == name:
-            out.append(f"{name}={value}")
+            out.append(f"{name}={env_quote(value)}")
             found = True
         else:
             out.append(line)
     if not found:
-        out.append(f"{name}={value}")
+        out.append(f"{name}={env_quote(value)}")
     open(path, "w").write("\n".join(out) + "\n")
 
 def set_dashboard_password(newpw):
@@ -309,14 +319,15 @@ def salad_live():
                 pr = info.get("prices", {}).get(prio)
                 if info.get("name") and pr is not None:
                     classprice[gpu_key(info.get("name"))] = float(pr)
-            def inst_price(gname):
+            def inst_price_num(gname):
                 k = gpu_key(gname)
                 if k in classprice:
-                    return f"${classprice[k]:.3f}/h"
+                    return classprice[k]
                 fb = SALAD_GPU_PRICES.get(k, {}).get(prio)
-                if fb is not None:
-                    return f"${fb:.3f}/h"
-                return label
+                return float(fb) if fb is not None else None
+            def inst_price(gname):
+                n = inst_price_num(gname)
+                return f"${n:.3f}/h" if n is not None else label
             insts = []
             try:
                 d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
@@ -335,6 +346,7 @@ def salad_live():
                 res["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
+                                         "price": inst_price_num(gpu),
                                          "price_label": inst_price(gpu), "hashrate_th": hr})
             if not insts:  # /instances 失败/为空时, 用矿池 salad worker 兜底显示
                 for w in pool_workers:
@@ -346,6 +358,7 @@ def salad_live():
                     igpu = pgpu(w) or "?"
                     res["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
                                              "group": nm, "state": "running", "started_epoch": None,
+                                             "price": inst_price_num(igpu),
                                              "price_label": inst_price(igpu), "hashrate_th": phr(w)})
         if prices:
             lo, hi = min(prices), max(prices)
@@ -360,7 +373,7 @@ def active_rentals(plat):
     out = []
     if plat == "salad":
         for i in salad_live().get("instances", []):
-            out.append({"id": i["id"], "gpu": i.get("gpu") or "?", "price": None,
+            out.append({"id": i["id"], "gpu": i.get("gpu") or "?", "price": i.get("price"),
                         "price_label": i.get("price_label"),
                         "hashrate_th": i.get("hashrate_th"),
                         "created_epoch": i.get("started_epoch"),
@@ -381,7 +394,7 @@ def tick_spend():
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
         now = time.time()
         hourly = 0.0
-        for plat in ["vast", "runpod", "tensordock"]:
+        for plat in ["vast", "runpod", "tensordock", "salad"]:
             for r in active_rentals(plat):
                 try:
                     hourly += float(r.get("price") or 0)

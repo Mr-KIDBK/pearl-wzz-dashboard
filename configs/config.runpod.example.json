@@ -62,7 +62,7 @@
     "create_observed_price_factor": 1.0,
     "start_ssh": false,
     "short_exit_blacklist_seconds": 60,
-    "terminal_pod_cleanup_enabled": true,
+    "cleanup_untracked_terminal_pods": false,
     "hashrate_watch_enabled": true
   },
   "tensordock": {
