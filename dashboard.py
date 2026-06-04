@@ -368,6 +368,44 @@ def salad_live():
     _salad.update(data=res, ts=now)
     return res
 
+def _http_json(method, url, headers, body=None):
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    h = dict(headers); h.setdefault("User-Agent", "sniper-dashboard/1.0")
+    req = urllib.request.Request(url, data=data, headers=h, method=method)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+_bal = {}  # plat -> (value|None, ts)
+BAL_TTL = 60.0
+
+def platform_balance(plat):
+    """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None。"""
+    now = time.time()
+    c = _bal.get(plat)
+    if c and now - c[1] < BAL_TTL:
+        return c[0]
+    val = None
+    env = read_env()
+    try:
+        if plat == "vast":
+            k = env.get("VAST_API_KEY") or os.environ.get("VAST_API_KEY", "")
+            if k:
+                d = _http_json("GET", "https://console.vast.ai/api/v0/users/current/", {"Authorization": "Bearer " + k})
+                val = d.get("credit")
+        elif plat == "runpod":
+            k = env.get("RUNPOD_API_KEY") or os.environ.get("RUNPOD_API_KEY", "")
+            if k:
+                d = _http_json("POST", "https://api.runpod.io/graphql",
+                               {"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                               body={"query": "query{myself{clientBalance}}"})
+                val = ((d.get("data") or {}).get("myself") or {}).get("clientBalance")
+        if val is not None:
+            val = round(float(val), 2)
+    except Exception:
+        val = None
+    _bal[plat] = (val, now)
+    return val
+
 def active_rentals(plat):
     st = read_state(plat)
     out = []
@@ -474,6 +512,11 @@ def build_rentals():
             "min_hashrate_th": cfg.get("min_hashrate_th"),
             "machines": items,
         }
+        bal = platform_balance(plat)
+        burn = sum(float(m.get("price") or 0) for m in items)
+        res[plat]["balance"] = bal
+        res[plat]["burn_hourly"] = round(burn, 4)
+        res[plat]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
         if plat == "salad":
             sl = salad_live()
             cnts = {}
@@ -815,6 +858,7 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 .platbox{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--bd);border-radius:13px;padding:17px 19px;margin-bottom:15px;box-shadow:0 14px 30px -24px rgba(0,0,0,.8)}
 .platbox .top{display:flex;align-items:center;gap:9px;margin-bottom:12px}
 .platbox .top b{font-size:14px;font-weight:700;letter-spacing:.8px;color:var(--hi)}
+.bal{margin-left:auto;color:var(--mut);font-size:12px;white-space:nowrap;font-family:var(--mono)}
 .req{color:var(--bad);font-size:10px;border:1px solid rgba(255,122,122,.4);background:var(--badbg);border-radius:5px;padding:1px 6px;letter-spacing:.5px}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
 button:hover{border-color:var(--g2);color:var(--hi);background:rgba(63,224,197,.06)}
@@ -921,12 +965,13 @@ let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  �
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
+let bh;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');bh=`<span class=bal>余额 $${fnum(v.balance,2)}${t?' · '+t:''}</span>`;}else{bh='<span class=bal>余额 —</span>';}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
 let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
 return `<tr><td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=6 class=muted>无在跑机器</td></tr>`;
-plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()}</b>${badges}</div>${sstat}
+plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()}</b>${badges}${bh}</div>${sstat}
 <table><tr><th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
