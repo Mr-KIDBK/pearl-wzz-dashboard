@@ -844,7 +844,6 @@ return `<div class=lbl>${p.toUpperCase()} · 平台配置</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
-<div class=fld>效率门槛 min_th_per_usd_hour</div><input id="mt_${p}" value="${esc(v.min_th_per_usd_hour==null?'':v.min_th_per_usd_hour)}">
 </div>
 <div class=lbl style=margin-top:14px>GPU 型号 · 最高 $/h · 最低 TH/s</div>
 <div class=gpurow style=color:var(--mut);font-size:11px><div>GPU</div><div>最高 $/h</div><div>最低 TH/s</div><div></div></div>
@@ -887,7 +886,6 @@ return {thresholds:th,min_hashrate_th:mh};}
 
 async function savePlat(p){const v=CFG.platforms[p];let patch={enabled:document.getElementById('en_'+p).checked};
 if(v.has_create)patch.create_enabled=document.getElementById('ce_'+p).checked;
-let mt=parseFloat(document.getElementById('mt_'+p).value);if(!isNaN(mt))patch.min_th_per_usd_hour=mt;
 let g=collectGpus(p);patch.thresholds=g.thresholds;patch.min_hashrate_th=g.min_hashrate_th;
 (v.specific||[]).forEach(s=>{let el=document.getElementById('sp_'+p+'_'+s.key);if(!el)return;
 if(s.type=='bool')patch[s.key]=el.checked;
