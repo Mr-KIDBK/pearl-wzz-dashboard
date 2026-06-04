@@ -23,5 +23,5 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# 私有运维笔记(含服务器 IP / 主机名 / 钱包)
-docs/server-ops.md
+# 文档全部本地保留, 不随仓库分发
+docs/

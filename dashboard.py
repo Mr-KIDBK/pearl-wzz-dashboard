@@ -46,7 +46,7 @@ def load_conf():
     try:
         return json.load(open(ROOT / "dashboard.conf.json"))
     except Exception:
-        return {"user": "admin", "password": "changeme", "port": 8787}
+        return {"user": "admin", "password": "123456", "port": 8787}
 
 CONF = load_conf()
 SESSIONS = {}
