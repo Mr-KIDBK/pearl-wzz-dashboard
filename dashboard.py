@@ -650,99 +650,114 @@ def backup_and_write(path, obj):
         pass
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
 
-def save_platform_cfg(plat, patch):
-    if plat not in PLATFORMS or not isinstance(patch, dict):
+def save_platform_cfg(acct, patch):
+    if acct not in list_accounts() or not isinstance(patch, dict):
         return {"error": "参数无效"}
-    p = cfg_path(plat)
+    plat = platform_of(acct)
+    p = cfg_path(acct)
     cfg = read_json(p, {})
     sub = cfg.get(plat, {}) or {}
     sub.update(patch)
     cfg[plat] = sub
     backup_and_write(p, cfg)
-    return {"ok": True, "platform": plat}
+    return {"ok": True, "platform": acct}
 
 def save_common_cfg(data):
     if not isinstance(data, dict):
         return {"error": "参数无效"}
     data = {k: v for k, v in data.items() if k in COMMON_KEYS}
-    for plat in PLATFORMS:
-        p = cfg_path(plat)
+    accts = list_accounts()
+    for acct in accts:
+        p = cfg_path(acct)
         cfg = read_json(p, {})
         cfg.update(data)
         backup_and_write(p, cfg)
-    return {"ok": True, "written": len(PLATFORMS)}
+    return {"ok": True, "written": len(accts)}
 
-def save_raw_cfg(plat, raw):
-    if plat not in PLATFORMS:
-        return {"error": "平台无效"}
+def save_raw_cfg(acct, raw):
+    if acct not in list_accounts():
+        return {"error": "账号无效"}
     try:
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             return {"error": "顶层必须是 JSON 对象"}
     except Exception as e:
         return {"error": f"JSON 非法: {e}"}
-    backup_and_write(cfg_path(plat), obj)
-    return {"ok": True, "platform": plat}
+    backup_and_write(cfg_path(acct), obj)
+    return {"ok": True, "platform": acct}
 
-def launch_platform(plat):
+def launch_platform(acct):
     env = dict(os.environ)
     for k, v in read_env().items():
         env[k] = v
-    env["SNIPER_LOG_PATH"] = f"logs/{plat}.log"
-    env["SNIPER_STATE_PATH"] = f"state.{plat}.json"
+    # 多账号: 把该账号的 key 注入成 sniper 期望的标准变量名(account2 的 key 在 *_2)
+    kv = read_env().get(key_var_for(acct), "")
+    std = KEYNAME.get(platform_of(acct), "")
+    if kv and std:
+        env[std] = kv
+    env["SNIPER_LOG_PATH"] = f"logs/{acct}.log"
+    env["SNIPER_STATE_PATH"] = f"state.{acct}.json"
     try:
-        logf = open(ROOT / f"logs/{plat}.log", "a")
-        subprocess.Popen(["python3", "sniper.py", "--config", f"configs/config.{plat}.json", "--live"],
+        logf = open(ROOT / f"logs/{acct}.log", "a")
+        subprocess.Popen(["python3", "sniper.py", "--config", f"configs/config.{acct}.json", "--live"],
                          cwd=str(ROOT), env=env, stdout=logf, stderr=logf, start_new_session=True)
         return True
     except Exception:
         return False
 
-def restart_platform(plat):
-    if plat not in PLATFORMS:
-        return {"error": "平台无效"}
-    pid = pid_for(plat)
+def restart_platform(acct):
+    if acct not in list_accounts():
+        return {"error": "账号无效"}
+    pid = pid_for(acct)
     if pid:
         try:
             subprocess.run(["kill", pid])
         except Exception:
             pass
         time.sleep(2)
-    ok = launch_platform(plat)
+    ok = launch_platform(acct)
     time.sleep(1.5)
-    return {"ok": ok, "platform": plat, "process_running": pid_for(plat) is not None}
+    return {"ok": ok, "platform": acct, "process_running": pid_for(acct) is not None}
 
-def do_rent_toggle(plat, paused):
+def do_rent_toggle(acct, paused):
     CONTROL_DIR.mkdir(exist_ok=True)
-    flag = CONTROL_DIR / f"{plat}.rent-paused"
+    # sniper 按平台名读 control/<平台>.rent-paused, 故暂停是平台级(同平台账号联动)
+    flag = CONTROL_DIR / f"{platform_of(acct)}.rent-paused"
     launched = False
     if paused:
         flag.touch()
     else:
         if flag.exists():
             flag.unlink()
-        if pid_for(plat) is None:
-            launched = launch_platform(plat)
+        if pid_for(acct) is None:
+            launched = launch_platform(acct)
             time.sleep(1.5)
-    return {"ok": True, "platform": plat, "rent_paused": flag.exists(),
-            "process_running": pid_for(plat) is not None, "launched": launched}
+    return {"ok": True, "platform": acct, "rent_paused": flag.exists(),
+            "process_running": pid_for(acct) is not None, "launched": launched}
 
-def do_terminate(plat, mid, group=None):
+def do_terminate(acct, mid, group=None):
     if not mid:
         return {"error": "缺少实例 id"}
     try:
         import sniper as S
+        plat = platform_of(acct)
+        cfg = read_config(acct)
+        # 注入该账号 key, 让销毁/reallocate 用对账号(account2 的 key 在 *_2)
+        kv = read_env().get(key_var_for(acct), "")
+        std = KEYNAME.get(plat, "")
+        if kv and std:
+            os.environ[std] = kv
         if plat == "vast":
             r = S.destroy_vast_instance(mid)
         elif plat == "runpod":
             r = S.delete_runpod_pod(mid)
         elif plat == "tensordock":
-            r = S.delete_tensordock_instance(read_config("tensordock"), mid)
+            r = S.delete_tensordock_instance(cfg, mid)
         elif plat == "salad":
-            r = S.reallocate_salad_instance(read_config("salad"), group or "", mid)
+            r = S.reallocate_salad_instance(cfg, group or "", mid)
         else:
             return {"error": "平台无效"}
-        return {"ok": True, "platform": plat, "id": mid, "result": r}
+        return {"ok": True, "platform": acct, "id": mid, "result": r}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
 
@@ -820,8 +835,8 @@ class H(BaseHTTPRequestHandler):
                 q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 plat = (q.get("platform") or [""])[0]
                 n = (q.get("lines") or ["300"])[0]
-                if plat not in PLATFORMS:
-                    return self._send(400, {"error": "平台无效"})
+                if plat not in list_accounts():
+                    return self._send(400, {"error": "账号无效"})
                 return self._send(200, {"platform": plat, "log": tail_log(plat, n)})
         return self._send(404, {"error": "not found"})
 
@@ -840,19 +855,19 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/key":
             plat = str(data.get("platform", ""))
             value = str(data.get("value", "")).strip()
-            if plat not in KEYNAME or not value:
+            if plat not in list_accounts() or not value:
                 return self._send(400, {"error": "参数无效"})
-            set_env_key(KEYNAME[plat], value)
+            set_env_key(key_var_for(plat), value)
             return self._send(200, {"ok": True, "platform": plat})
         if path == "/api/rent-toggle":
             plat = str(data.get("platform", ""))
-            if plat not in PLATFORMS:
-                return self._send(400, {"error": "平台无效"})
+            if plat not in list_accounts():
+                return self._send(400, {"error": "账号无效"})
             return self._send(200, do_rent_toggle(plat, bool(data.get("paused"))))
         if path == "/api/terminate":
             plat = str(data.get("platform", ""))
-            if plat not in PLATFORMS:
-                return self._send(400, {"error": "平台无效"})
+            if plat not in list_accounts():
+                return self._send(400, {"error": "账号无效"})
             return self._send(200, do_terminate(plat, str(data.get("id", "")), str(data.get("group", "")) or None))
         if path == "/api/save-platform":
             return self._send(200, save_platform_cfg(str(data.get("platform", "")), data.get("data")))
