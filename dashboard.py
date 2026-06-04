@@ -231,7 +231,7 @@ def pool_data():
 
 
 # ---------- Salad 实时 ----------
-_salad = {"data": None, "ts": 0.0}
+_salad = {}  # account_id -> {"data", "ts"}
 SALAD_TTL = 30.0
 
 def salad_get(url, key):
@@ -272,13 +272,14 @@ SALAD_GPU_PRICES = {
     "rtx a5000":         {"low": 0.143, "medium": 0.197, "high": 0.25},
 }
 
-_gpucls = {"data": None, "ts": 0.0}
+_gpucls = {}  # org -> {"data", "ts"}
 
 def salad_gpu_prices(base, org, key):
-    """{uuid: {name, prices:{priority:price}}} ，缓存 10min。"""
+    """{uuid: {name, prices:{priority:price}}} ，缓存 10min(按 org)。"""
     now = time.time()
-    if _gpucls["data"] is not None and now - _gpucls["ts"] < 600:
-        return _gpucls["data"]
+    slot = _gpucls.get(org)
+    if slot and now - slot["ts"] < 600:
+        return slot["data"]
     out = {}
     try:
         d = salad_get(f"{base}/organizations/{org}/gpu-classes", key)
@@ -287,20 +288,23 @@ def salad_gpu_prices(base, org, key):
             out[g.get("id")] = {"name": g.get("name"), "prices": pr}
     except Exception:
         pass
-    _gpucls.update(data=out, ts=now)
+    _gpucls[org] = {"data": out, "ts": now}
     return out
 
-def salad_live():
+def salad_live(account_id="salad"):
     now = time.time()
-    if _salad["data"] is not None and now - _salad["ts"] < SALAD_TTL:
-        return _salad["data"]
+    slot = _salad.get(account_id)
+    if slot and now - slot["ts"] < SALAD_TTL:
+        return slot["data"]
     res = {"instances": [], "counts": {}, "error": None, "price_label": None, "gpu_classes": []}
-    scfg = read_config("salad").get("salad", {})
-    key = read_env().get("SALAD_API_KEY") or os.environ.get("SALAD_API_KEY", "")
+    plat = platform_of(account_id)
+    scfg = read_config(account_id).get(plat, {})
+    kv = key_var_for(account_id)
+    key = read_env().get(kv) or os.environ.get(kv, "")
     org, proj = scfg.get("organization_name"), scfg.get("project_name")
     if not (key and org and proj and scfg.get("enabled")):
         res["error"] = "salad 未启用/未配置 key"
-        _salad.update(data=res, ts=now)
+        _salad[account_id] = {"data": res, "ts": now}
         return res
     base = str(scfg.get("base_url", "https://api.salad.com/api/public")).rstrip("/")
     pre = f"{base}/organizations/{org}/projects/{proj}/containers"
@@ -310,7 +314,7 @@ def salad_live():
         if not names:
             d = salad_get(pre, key)
             names = [g.get("name") for g in (d.get("items") or [])]
-        watch = read_state("salad").get("salad_instance_watch") or {}
+        watch = read_state(account_id).get("salad_instance_watch") or {}
         # 矿池侧: salad worker 名 = <prefix>-salad-<machine_id>, gpu_info 带真实卡型
         pool = pool_data()
         pool_workers = (pool.get("connected_workers") or []) if isinstance(pool, dict) else []
@@ -405,7 +409,7 @@ def salad_live():
             res["price_label"] = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
     except Exception as e:
         res["error"] = f"{type(e).__name__}: {e}"
-    _salad.update(data=res, ts=now)
+    _salad[account_id] = {"data": res, "ts": now}
     return res
 
 def _http_json(method, url, headers, body=None):
@@ -418,22 +422,24 @@ def _http_json(method, url, headers, body=None):
 _bal = {}  # plat -> (value|None, ts)
 BAL_TTL = 60.0
 
-def platform_balance(plat):
+def platform_balance(account_id):
     """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None。"""
     now = time.time()
-    c = _bal.get(plat)
+    c = _bal.get(account_id)
     if c and now - c[1] < BAL_TTL:
         return c[0]
     val = None
+    plat = platform_of(account_id)
     env = read_env()
+    kv = key_var_for(account_id)
     try:
         if plat == "vast":
-            k = env.get("VAST_API_KEY") or os.environ.get("VAST_API_KEY", "")
+            k = env.get(kv) or os.environ.get(kv, "")
             if k:
                 d = _http_json("GET", "https://console.vast.ai/api/v0/users/current/", {"Authorization": "Bearer " + k})
                 val = d.get("credit")
         elif plat == "runpod":
-            k = env.get("RUNPOD_API_KEY") or os.environ.get("RUNPOD_API_KEY", "")
+            k = env.get(kv) or os.environ.get(kv, "")
             if k:
                 d = _http_json("POST", "https://api.runpod.io/graphql",
                                {"Authorization": "Bearer " + k, "Content-Type": "application/json"},
@@ -443,14 +449,14 @@ def platform_balance(plat):
             val = round(float(val), 2)
     except Exception:
         val = None
-    _bal[plat] = (val, now)
+    _bal[account_id] = (val, now)
     return val
 
-def active_rentals(plat):
-    st = read_state(plat)
+def active_rentals(account_id):
+    st = read_state(account_id)
     out = []
-    if plat == "salad":
-        for i in salad_live().get("instances", []):
+    if platform_of(account_id) == "salad":
+        for i in salad_live(account_id).get("instances", []):
             out.append({"id": i["id"], "gpu": i.get("gpu") or "?", "price": i.get("price"),
                         "price_label": i.get("price_label"),
                         "hashrate_th": i.get("hashrate_th"),
