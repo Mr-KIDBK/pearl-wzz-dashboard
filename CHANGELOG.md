@@ -2,12 +2,13 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
-## [登录页改版 · 珍珠主视觉] — 2026-06-05
+## [登录页改版 · 海洋玻璃主视觉(v2)] — 2026-06-05
 
 ### Changed
-- **登录页按设计稿高保真重写**（`design_handoff_pearl_login/`）：两栏布局——左侧自旋虹彩**珍珠**(纯 CSS 渐变 + box-shadow + conic/mask)+ whirl 动效(3 圈 + 双轨道粒子 + 彗尾扫光 + 光晕),右侧白色登录卡(eyebrow / 标题 / 副标题 / 密码框含红色指示图标 / 渐变登录钮 / 分隔线 / 偷窥模式页脚)。
-- 浅蓝紫渐变背景、Noto Sans SC + JetBrains Mono 字体、精确还原尺寸/色值/阴影/动画;`@media(prefers-reduced-motion)` 关闭动画;820px 以下单列堆叠。
-- 全部样式 `#login` 作用域隔离(避免与看板 `.card/.sub` 等冲突),登录逻辑(`login()`/`guestLogin()`/`#pw`/`#lerr`)不变;登录页固定浅色,不随看板亮/暗主题切换。
+- **登录页按设计稿高保真重写**（`design_handoff_pearl_login/` v2）：整页**海洋→沙滩场景**(天空/海面渐变 + 阳光 + 漂移焦散光纹 + 浪花泡沫线 + 沙滩斑点),左侧自旋虹彩**珍珠**漂浮水中(纯 CSS 渐变 + box-shadow + conic/mask)+ whirl 动效(扩散水波纹 ×3 + 3 圈 + 双轨道粒子 + 彗尾扫光 + 光晕);右侧**玻璃拟态(frosted glass)登录卡**(`backdrop-filter:blur(22px)`,海面透过卡片隐约可见,顶部高光 sheen)。
+- 卡片内容:eyebrow / 标题(珍珠=深蓝)/ 副标题 / 干净密码框(无图标,focus 白霜环)/ 渐变登录钮(含 inset 高光)/ 分隔线 / 偷窥模式页脚。
+- Noto Sans SC + JetBrains Mono;精确还原尺寸/色值/阴影/动画;`@media(prefers-reduced-motion)` 关闭全部动画;820px 以下单列堆叠。
+- 全部样式 `#login` 作用域隔离(避免与看板 `.card/.sub` 等冲突),登录逻辑(`login()`/`guestLogin()`/`#pw`/`#lerr`)不变;登录页固定海洋浅色,不随看板亮/暗主题切换。(上一版纯浅蓝背景 + 白卡 v1 已被本版取代。)
 
 ## [行情图表 + 实时币价] — 2026-06-05
 
