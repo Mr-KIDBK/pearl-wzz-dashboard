@@ -1145,7 +1145,7 @@ HTML = r"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta name=theme-color content="#f3f6fc">
 <link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'><defs><radialGradient%20id='g'%20cx='37%25'%20cy='31%25'%20r='78%25'><stop%20offset='0%25'%20stop-color='%23f2fffc'/><stop%20offset='17%25'%20stop-color='%238ff3e6'/><stop%20offset='42%25'%20stop-color='%233fe0c5'/><stop%20offset='71%25'%20stop-color='%231aa6cf'/><stop%20offset='100%25'%20stop-color='%23083f57'/></radialGradient><radialGradient%20id='h'%20cx='50%25'%20cy='50%25'%20r='50%25'><stop%20offset='0%25'%20stop-color='%233fe0c5'%20stop-opacity='0.55'/><stop%20offset='100%25'%20stop-color='%233fe0c5'%20stop-opacity='0'/></radialGradient></defs><circle%20cx='32'%20cy='32'%20r='27'%20fill='url(%23h)'/><circle%20cx='32'%20cy='32'%20r='17'%20fill='url(%23g)'/><ellipse%20cx='25.5'%20cy='24'%20rx='6.5'%20ry='4.6'%20fill='%23ffffff'%20opacity='0.92'/></svg>">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{--bg:#0a0e17;--bg2:#0f1623;--card:#141b2b;--card2:#172033;--bd:#23304a;--bd2:#33415f;
 --tx:#c4cde2;--hi:#eef2fb;--mut:#79839c;--g1:#5a8dff;--g2:#3fe0c5;
 --acc:#3fe0c5;--acc2:rgba(63,224,197,.12);--ok:#3fe0c5;--okbg:rgba(63,224,197,.12);
@@ -1265,11 +1265,59 @@ summary{cursor:pointer;color:var(--mut);font-size:11.5px;letter-spacing:.4px}
 summary:hover{color:var(--acc)}
 .divider{border:0;border-top:1px solid var(--bd);margin:11px 0}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--card);border:1px solid var(--g2);color:var(--acc);padding:12px 17px;border-radius:11px;font-size:12px;z-index:30;display:none;box-shadow:0 18px 50px -20px rgba(63,224,197,.4)}
-#login{position:fixed;inset:0;background:radial-gradient(1000px 560px at 50% -120px,rgba(90,141,255,.18),transparent 60%),radial-gradient(800px 500px at 50% 100%,rgba(63,224,197,.1),transparent 60%),var(--bg);display:flex;align-items:center;justify-content:center;z-index:20}
-#login .box{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--bd);border-radius:16px;padding:32px;width:344px;box-shadow:0 30px 70px -28px rgba(0,0,0,.85)}
-#login .logo{font-size:12px;letter-spacing:1.5px;margin-bottom:14px;font-family:var(--mono);background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-#login h2{margin:0 0 4px;font-size:25px;font-weight:800;color:var(--hi)}
-#login .sub{color:var(--mut);font-size:12px;letter-spacing:1.5px;margin-bottom:20px}
+/* ===== Pearl Login（高保真设计稿） ===== */
+#login{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:48px 32px;font-family:"Noto Sans SC",system-ui,-apple-system,"PingFang SC",sans-serif;color:#1f2a37;-webkit-font-smoothing:antialiased;--lblue:#2f6fe4;--lteal:#34b6a0;--lcyan:#56d4d8;background:radial-gradient(900px 520px at 50% -12%,#ffffff 0%,rgba(255,255,255,0) 62%),radial-gradient(1100px 640px at 50% 118%,#dde7fb 0%,rgba(221,231,251,0) 60%),linear-gradient(158deg,#eef2fd 0%,#e6ecfb 56%,#e1e9fa 100%)}
+#login .stage{width:100%;max-width:1080px;display:grid;grid-template-columns:1.05fr 0.95fr;align-items:center;gap:24px}
+#login .pearl-scene{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-height:420px}
+#login .pearl-scene::before{content:"";position:absolute;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle at 50% 45%,rgba(86,212,216,.34),rgba(47,111,228,.12) 46%,transparent 70%);filter:blur(14px);animation:lhalo 5.5s ease-in-out infinite}
+@keyframes lhalo{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.08);opacity:1}}
+@keyframes lspin{to{transform:rotate(360deg)}}
+@keyframes lbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+#login .whirl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+#login .ring{position:absolute;border-radius:50%;border:1.5px solid transparent}
+#login .ring.r1{width:330px;height:330px;border-top-color:rgba(52,182,160,.55);border-right-color:rgba(86,212,216,.30);animation:lspin 3.4s linear infinite}
+#login .ring.r2{width:382px;height:382px;border-bottom-color:rgba(47,111,228,.45);border-left-color:rgba(47,111,228,.16);animation:lspin 5.6s linear infinite reverse}
+#login .ring.r3{width:434px;height:434px;border-top-color:rgba(86,212,216,.30);border-style:dashed;border-width:1px;animation:lspin 11s linear infinite}
+#login .orbit{position:absolute;width:300px;height:300px;animation:lspin 4.2s linear infinite}
+#login .orbit.o2{width:392px;height:392px;animation:lspin 7.5s linear infinite reverse}
+#login .dot{position:absolute;top:50%;left:50%;width:7px;height:7px;border-radius:50%;background:var(--lteal);box-shadow:0 0 10px rgba(52,182,160,.9);transform-origin:0 0}
+#login .orbit .dot{background:var(--lcyan);box-shadow:0 0 10px rgba(86,212,216,.9)}
+#login .orbit.o2 .dot{background:var(--lblue);box-shadow:0 0 10px rgba(47,111,228,.85)}
+#login .dot.d1{transform:translate(150px,0)}
+#login .dot.d2{width:4px;height:4px;transform:translate(-150px,0);opacity:.8}
+#login .dot.d3{width:5px;height:5px;transform:translate(0,150px);opacity:.7}
+#login .orbit.o2 .dot.d1{transform:translate(196px,0)}
+#login .orbit.o2 .dot.d2{transform:translate(-138px,138px);width:5px;height:5px}
+#login .orbit.o2 .dot.d3{transform:translate(138px,-138px);width:4px;height:4px;opacity:.7}
+#login .sweep{position:absolute;width:352px;height:352px;border-radius:50%;background:conic-gradient(from 0deg,rgba(86,212,216,0) 0deg,rgba(86,212,216,0) 300deg,rgba(86,212,216,.5) 350deg,rgba(255,255,255,.85) 360deg);-webkit-mask:radial-gradient(circle,transparent 168px,#000 169px,#000 176px,transparent 177px);mask:radial-gradient(circle,transparent 168px,#000 169px,#000 176px,transparent 177px);animation:lspin 2.6s linear infinite}
+#login .pearl{position:relative;width:232px;height:232px;border-radius:50%;background:radial-gradient(circle at 34% 27%,#ffffff 0%,#eafdfc 9%,#cdf3f1 22%,#8fe2e0 41%,#4fc1cc 63%,#2f92c2 84%,#2a6fd2 100%);box-shadow:inset -22px -26px 46px rgba(20,60,110,.42),inset 16px 18px 30px rgba(255,255,255,.55),0 26px 60px rgba(38,86,170,.34),0 4px 14px rgba(38,86,170,.22);overflow:hidden;animation:lbob 5.5s ease-in-out infinite}
+#login .pearl::before{content:"";position:absolute;inset:-14%;border-radius:50%;background:conic-gradient(from 0deg,rgba(255,255,255,0) 0deg,rgba(150,232,255,.30) 48deg,rgba(120,255,214,.20) 110deg,rgba(160,200,255,.34) 168deg,rgba(255,255,255,0) 220deg,rgba(120,255,224,.18) 286deg,rgba(255,255,255,0) 360deg);mix-blend-mode:screen;animation:lspin 6.5s linear infinite}
+#login .pearl::after{content:"";position:absolute;inset:0;border-radius:50%;background:repeating-conic-gradient(from 0deg,rgba(255,255,255,0) 0deg,rgba(255,255,255,0) 26deg,rgba(255,255,255,.12) 30deg,rgba(255,255,255,0) 34deg);-webkit-mask:radial-gradient(circle at 50% 50%,#000 60%,transparent 92%);mask:radial-gradient(circle at 50% 50%,#000 60%,transparent 92%);mix-blend-mode:screen;animation:lspin 4.4s linear infinite}
+#login .glint{position:absolute;z-index:3;top:16%;left:24%;width:62px;height:46px;border-radius:50%;background:radial-gradient(circle at 40% 38%,rgba(255,255,255,.95),rgba(255,255,255,0) 66%);filter:blur(1px);transform:rotate(-22deg);pointer-events:none}
+#login .underglow{position:absolute;z-index:2;bottom:9%;left:50%;width:120px;height:54px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(circle at 50% 60%,rgba(190,250,250,.7),rgba(120,220,230,.16) 52%,transparent 72%);filter:blur(3px);pointer-events:none}
+#login .pcard{background:#ffffff;border:1px solid rgba(255,255,255,.7);border-radius:22px;padding:38px 40px 30px;box-shadow:0 30px 70px rgba(40,72,150,.16),0 6px 18px rgba(40,72,150,.08);max-width:420px;width:100%;justify-self:center}
+#login .eyebrow{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;letter-spacing:.16em;color:var(--lblue);margin-bottom:12px}
+#login .ltitle{font-size:30px;font-weight:900;letter-spacing:.04em;line-height:1;color:#1f2a37}
+#login .ltitle .accent{color:var(--lblue)}
+#login .lsub{margin-top:12px;font-size:13px;letter-spacing:.18em;color:#64748b}
+#login .field{margin-top:24px;position:relative;display:flex;align-items:center;background:#f6f8fc;border:1px solid #e7ecf4;border-radius:12px;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
+#login .field:focus-within{border-color:var(--lblue);background:#fff;box-shadow:0 0 0 4px rgba(47,111,228,.12)}
+#login .field input{flex:1;width:auto;border:0;outline:0;box-shadow:none;background:transparent;padding:15px 16px;font-family:inherit;font-size:14px;letter-spacing:.06em;color:#1f2a37}
+#login .field input:focus{box-shadow:none;border:0}
+#login .field input::placeholder{color:#9aa6b8;letter-spacing:.08em}
+#login .ficon{margin-right:12px;width:30px;height:22px;flex:0 0 auto;border-radius:6px;background:linear-gradient(180deg,#ff5b6a,#e23d52);display:flex;align-items:center;justify-content:center;gap:3px;box-shadow:0 3px 8px rgba(226,61,82,.35)}
+#login .ficon span{width:4px;height:4px;border-radius:50%;background:#fff;opacity:.95}
+#login .lbtn{margin-top:18px;width:100%;border:0;border-radius:12px;padding:15px 16px;font-family:inherit;font-size:15px;font-weight:700;letter-spacing:.04em;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--lblue) 0%,#2f8fcf 48%,var(--lteal) 100%);box-shadow:0 12px 26px rgba(47,111,228,.32);transition:transform .12s ease,box-shadow .18s ease,filter .18s ease}
+#login .lbtn:hover{filter:brightness(1.05);box-shadow:0 16px 32px rgba(47,111,228,.4)}
+#login .lbtn:active{transform:translateY(1px) scale(.995);box-shadow:0 8px 18px rgba(47,111,228,.3)}
+#login .lerr{color:#e23d52;font-size:11.5px;margin-top:10px;min-height:14px;letter-spacing:.02em}
+#login .ldiv{height:1px;background:#e7ecf4;margin:24px 0 16px}
+#login .foot{display:flex;align-items:center;gap:8px;font-size:12px;color:#9aa6b8;letter-spacing:.04em;cursor:pointer;transition:color .14s ease}
+#login .foot:hover{color:var(--lblue)}
+#login .foot .lmono{font-family:"JetBrains Mono",ui-monospace,monospace;letter-spacing:.12em}
+#login .foot .eye{font-size:14px}
+@media (max-width:820px){#login .stage{grid-template-columns:1fr;gap:8px;max-width:440px}#login .pearl-scene{min-height:360px}#login .pearl{width:200px;height:200px}}
+@media (prefers-reduced-motion:reduce){#login .ring,#login .orbit,#login .sweep,#login .pearl,#login .pearl::before,#login .pearl::after,#login .pearl-scene::before{animation:none!important}}
 .muted{color:var(--mut);font-size:11.5px}
 .err{color:var(--bad);font-size:11.5px;margin-top:8px;min-height:14px}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
@@ -1325,15 +1373,25 @@ main{flex:1;min-width:0;margin-left:210px;padding:26px 32px;display:flex;justify
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
 <script>try{if(localStorage.getItem('pearl_theme')!='dark')document.documentElement.setAttribute('data-theme','light');}catch(e){document.documentElement.setAttribute('data-theme','light');}</script>
-<div id=login style=display:none><div class=box>
-<div style="display:flex;align-items:center;gap:18px;margin-bottom:14px">
-<span class=orb style="width:42px;height:42px"></span>
-<div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0;font-weight:600;letter-spacing:.2em">今晚挖<i class=pg>珍珠</i></h2></div></div>
-<div class=sub>PEARL SNIPER DASHBOARD</div>
-<input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
-<div class=err id=lerr></div>
-<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button>
-<div class=peek onclick=guestLogin()>👁 偷窥模式 · 仅看仪表盘 / PEEK MODE</div></div></div>
+<div id=login style=display:none><main class=stage>
+<section class=pearl-scene aria-hidden=true>
+<div class=whirl><div class="ring r3"></div><div class="ring r2"></div><div class="ring r1"></div><div class=sweep></div>
+<div class="orbit o1"><i class="dot d1"></i><i class="dot d2"></i><i class="dot d3"></i></div>
+<div class="orbit o2"><i class="dot d1"></i><i class="dot d2"></i><i class="dot d3"></i></div></div>
+<div class=pearl><span class=underglow></span><span class=glint></span></div>
+</section>
+<section class=pcard>
+<div class=eyebrow>// PEARL_SNIPER v1</div>
+<h1 class=ltitle>今晚挖<span class=accent>珍珠</span></h1>
+<div class=lsub>PEARL SNIPER DASHBOARD</div>
+<form onsubmit="login();return false">
+<label class=field><input id=pw type=password placeholder="ACCESS PASSWORD" autocomplete=current-password><span class=ficon><span></span><span></span><span></span></span></label>
+<div class=lerr id=lerr></div>
+<button type=submit class=lbtn>登录 / LOGIN</button>
+</form>
+<div class=ldiv></div>
+<div class=foot onclick=guestLogin()><span class=eye>👁</span><span>偷窥模式 · 仅看仪表盘</span><span class=lmono>/ PEEK MODE</span></div>
+</section></main></div>
 
 <div class=app>
 <aside class=side>

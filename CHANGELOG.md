@@ -2,6 +2,13 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [登录页改版 · 珍珠主视觉] — 2026-06-05
+
+### Changed
+- **登录页按设计稿高保真重写**（`design_handoff_pearl_login/`）：两栏布局——左侧自旋虹彩**珍珠**(纯 CSS 渐变 + box-shadow + conic/mask)+ whirl 动效(3 圈 + 双轨道粒子 + 彗尾扫光 + 光晕),右侧白色登录卡(eyebrow / 标题 / 副标题 / 密码框含红色指示图标 / 渐变登录钮 / 分隔线 / 偷窥模式页脚)。
+- 浅蓝紫渐变背景、Noto Sans SC + JetBrains Mono 字体、精确还原尺寸/色值/阴影/动画;`@media(prefers-reduced-motion)` 关闭动画;820px 以下单列堆叠。
+- 全部样式 `#login` 作用域隔离(避免与看板 `.card/.sub` 等冲突),登录逻辑(`login()`/`guestLogin()`/`#pw`/`#lerr`)不变;登录页固定浅色,不随看板亮/暗主题切换。
+
 ## [行情图表 + 实时币价] — 2026-06-05
 
 ### Added
