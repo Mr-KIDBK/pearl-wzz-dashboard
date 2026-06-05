@@ -843,11 +843,6 @@ def apply_low_efficiency_policy(config, state, provider, rented, hashrate_th, pr
                 # 已切过 host 重启的, 计时起点不再回填到原创建时刻, 而是从重启时刻起, 给足重新观察的窗口
                 first_low_epoch = max(first_low_epoch, switched_epoch)
         rented["low_efficiency_since_epoch"] = first_low_epoch
-        # 与 backdate 对齐: 若回填了低效起点(first_low_epoch < now)且当前算力为 0, 把零跟踪也回填到同一起点。
-        # 否则 backdate 会让机器在首次检测就越过销毁阈值, 而 zero_since 此刻才刚记 (≈0s),
-        # try_host_fallback 的"持续 N 秒为 0"判断永远不满足, 换 host 兜底形同虚设。
-        if float(hashrate_th) <= 0 and first_low_epoch < now_ts:
-            rented["zero_since_epoch"] = min(float(rented.get("zero_since_epoch") or now_ts), first_low_epoch)
         rented["low_efficiency_reason"] = f"hashrate={hashrate_th:.2f}TH efficiency={efficiency:.1f}TH_per_usd_hour"
         log(f"{provider} low efficiency observed: instance={instance_id} gpu={rented.get('gpu')} price=${price:.3f}/h hashrate={hashrate_th:.2f}TH efficiency={efficiency:.1f}")
         if provider != "runpod":
