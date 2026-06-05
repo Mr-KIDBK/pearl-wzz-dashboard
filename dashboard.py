@@ -118,6 +118,10 @@ PRICE_TTL      = 60.0   # 后台刷新间隔内视为新鲜; 请求线程直接�
 PRICE_STALE_MAX = 300.0  # 超此值(后台异常)才在请求线程同步重拉
 _SAFETRADE_URL = "https://safetrade.com/api/v2/peatio/public/markets/prlusdt/tickers"
 _price_cache: dict = {}  # {"prl": (price_float, ts)}
+_kline_cache: dict = {}  # {period_int: (data_list, ts)}
+KLINE_TTL = {15: 30, 60: 120, 240: 300, 1440: 600}  # 各周期缓存秒数
+_KLINE_BASE = "https://safetrade.com/api/v2/trade/public/markets/prlusdt/k-line"
+_KLINE_LIMITS = {15: 288, 60: 240, 240: 180, 1440: 180}  # 各周期拉取条数
 
 
 # ---------- 读 ----------
@@ -643,6 +647,29 @@ def fetch_coin_price(force=False):
 def coin_price():
     return fetch_coin_price()
 
+def kline_data(period=15, force=False):
+    """拉取 SafeTrade PRL/USDT K线(serve-stale 缓存)。period: 15/60/240/1440(分钟)。
+    返回 [[ts,open,high,low,close,volume], ...] 或旧缓存/空列表。"""
+    now = time.time()
+    cached = _kline_cache.get(period)
+    ttl = KLINE_TTL.get(period, 60)
+    if cached and not force and (now - cached[1] < ttl):
+        return cached[0]
+    limit = _KLINE_LIMITS.get(period, 200)
+    time_from = int(now) - limit * period * 60
+    url = f"{_KLINE_BASE}?period={period}&time_from={time_from}&time_to={int(now)}&limit={limit}"
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data, list):
+            _kline_cache[period] = (data, now)
+            return data
+    except Exception:
+        pass
+    return cached[0] if cached else []
+
 def reset_stats():
     """累计租金/产出/利润全部清零, 从现在重新起算; 保留已设的币价。"""
     with _lock:
@@ -1032,6 +1059,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "unauthorized"})
             if path == "/api/me":
                 return self._send(200, {"role": role, "user": "admin" if role == "admin" else "访客"})
+            if path == "/api/kline":
+                try:
+                    qs = urllib.parse.parse_qs(self.path.split("?",1)[1] if "?" in self.path else "")
+                    p = int((qs.get("period") or ["15"])[0])
+                    if p not in (15, 60, 240, 1440): p = 15
+                except Exception:
+                    p = 15
+                return self._send(200, kline_data(p))
             if path == "/api/summary":
                 return self._send(200, build_summary())
             if path == "/api/rentals":
@@ -1160,6 +1195,27 @@ header{background:rgba(15,22,35,.72);backdrop-filter:blur(10px);border-bottom:1p
 .wallet .go{flex-shrink:0;background:var(--acc2);color:var(--acc);border:1px solid rgba(63,224,197,.4);border-radius:9px;padding:9px 15px;font-weight:700;white-space:nowrap;letter-spacing:.3px;cursor:pointer;transition:.14s}
 .wallet .go:hover{background:rgba(63,224,197,.2);box-shadow:0 6px 18px -8px rgba(63,224,197,.5)}
 .sec{margin-top:28px}
+.kpanel{margin-top:14px;border:1px solid var(--bd);border-radius:13px;overflow:hidden;background:var(--card);transition:.2s}
+.khead{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;user-select:none;border-bottom:1px solid transparent;transition:.16s}
+.khead:hover{background:rgba(255,255,255,.03)}
+.kpanel.open .khead{border-bottom-color:var(--bd)}
+.ktit{font-size:12px;font-weight:600;letter-spacing:.5px;color:var(--mut)}
+.kprice{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--hi)}
+.kdelta{font-size:11px;font-family:var(--mono)}
+.kpers{display:flex;gap:4px;margin-left:auto}
+.kper{padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--bd);color:var(--mut);transition:.13s}
+.kper:hover{color:var(--hi);border-color:var(--bd2)}
+.kper.on{background:var(--acc2);color:var(--acc);border-color:rgba(63,224,197,.4)}
+.karr{font-size:11px;color:var(--mut);margin-left:6px;transition:.25s}
+.kpanel.open .karr{transform:rotate(180deg)}
+.kbody{display:none;padding:14px 16px 10px}
+.kpanel.open .kbody{display:block}
+.kcanvas-wrap{position:relative;width:100%}
+canvas.kc{width:100%;display:block;border-radius:8px}
+.ktip{position:absolute;top:6px;left:12px;background:rgba(10,14,23,.88);border:1px solid var(--bd2);border-radius:8px;padding:6px 10px;font-size:11px;font-family:var(--mono);color:var(--hi);pointer-events:none;display:none;white-space:nowrap;z-index:10;line-height:1.7}
+.kema-legend{display:flex;gap:14px;font-size:11px;font-family:var(--mono);margin-bottom:6px;color:var(--mut)}
+.kema-legend span{display:flex;align-items:center;gap:5px}
+.kema-legend i{display:inline-block;width:18px;height:2px;border-radius:1px}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:13px;overflow:hidden;box-shadow:0 14px 30px -24px rgba(0,0,0,.8)}
 th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--bd)}
 th{color:var(--mut);font-weight:600;font-size:10.5px;letter-spacing:1px;text-transform:uppercase;background:rgba(255,255,255,.02);font-family:'Inter'}
@@ -1368,8 +1424,125 @@ ${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:cent
 <button class=b-bad onclick="resetStats()">重置统计</button>
 ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:''}
 </div>`:''}${pe}
+<div class="kpanel" id=kpanel>
+<div class=khead onclick="toggleKline()">
+  <span class=ktit>📈 PRL/USDT 行情</span>
+  <span class=kprice id=kp_price>$${fnum(d.coin_price_usd,4)}</span>
+  <span class="kdelta" id=kp_delta></span>
+  <div class=kpers>
+    ${['15m','1h','4h','1d'].map(p=>`<span class="kper${p=='15m'?' on':''}" onclick="event.stopPropagation();setKPer('${p}')">${p}</span>`).join('')}
+  </div>
+  <span class=karr>▼</span>
+</div>
+<div class=kbody id=kbody>
+  <div class=kema-legend><span><i style="background:#f7c948"></i>EMA20</span><span><i style="background:#a78bfa"></i>EMA60</span></div>
+  <div class=kcanvas-wrap id=kwrap><canvas class=kc id=kcanvas height=340></canvas><div class=ktip id=ktip></div></div>
+  <div class=kcanvas-wrap id=kwrap2 style=margin-top:4px><canvas class=kc id=kvcanvas height=70></canvas></div>
+</div>
+</div>
 <div class=sec><div class=lbl>矿池在挖 WORKER</div><table><tr><th>Worker</th><th>GPU</th><th>算力</th><th>IP</th></tr>${wk}</table></div>
-<div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;}
+<div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;
+// renderOverview 每次重建 DOM 后恢复 K线展开状态
+if(_kopen){const kp=document.getElementById('kpanel');if(kp){kp.classList.add('open');if(_kdata)setTimeout(()=>drawKline(_kdata),0);else loadKline();}}
+}
+
+// ---------- K线图 ----------
+let _kper='15m',_kopen=false,_kdata=null;
+const _kperMap={'15m':15,'1h':60,'4h':240,'1d':1440};
+function toggleKline(){_kopen=!_kopen;const p=document.getElementById('kpanel');if(p)p.classList.toggle('open',_kopen);if(_kopen&&!_kdata)loadKline();}
+function setKPer(p){_kper=p;document.querySelectorAll('.kper').forEach(e=>e.classList.toggle('on',e.textContent==p));_kdata=null;if(_kopen)loadKline();}
+async function loadKline(){
+  const period=_kperMap[_kper]||15;
+  try{_kdata=await api('/api/kline?period='+period);}catch(e){return;}
+  if(_kdata&&_kdata.length)drawKline(_kdata);
+}
+function ema(closes,n){
+  const k=2/(n+1),r=[];let e=null;
+  for(let i=0;i<closes.length;i++){if(e===null){e=closes[i];}else{e=closes[i]*k+e*(1-k);}r.push(e);}
+  return r;
+}
+function drawKline(data){
+  const cc=document.getElementById('kcanvas');const vc=document.getElementById('kvcanvas');
+  if(!cc||!vc)return;
+  const DPR=window.devicePixelRatio||1;
+  const W=cc.parentElement.clientWidth;const CH=340,VH=70;
+  cc.width=W*DPR;cc.height=CH*DPR;cc.style.width=W+'px';cc.style.height=CH+'px';
+  vc.width=W*DPR;vc.height=VH*DPR;vc.style.width=W+'px';vc.style.height=VH+'px';
+  const ctx=cc.getContext('2d');ctx.scale(DPR,DPR);
+  const vctx=vc.getContext('2d');vctx.scale(DPR,DPR);
+  const N=data.length;if(!N)return;
+  const PAD={l:52,r:12,t:10,b:28};
+  const cW=W-PAD.l-PAD.r,cH=CH-PAD.t-PAD.b;
+  const opens=data.map(d=>parseFloat(d[1])),highs=data.map(d=>parseFloat(d[2]));
+  const lows=data.map(d=>parseFloat(d[3])),closes=data.map(d=>parseFloat(d[4]));
+  const vols=data.map(d=>parseFloat(d[5]));
+  const pMin=Math.min(...lows),pMax=Math.max(...highs),pRange=pMax-pMin||0.001;
+  const vMax=Math.max(...vols)||1;
+  const candleW=Math.max(1,Math.min(12,Math.floor(cW/N*0.72)));
+  const step=cW/N;
+  const px=(price)=>PAD.t+cH-(price-pMin)/pRange*cH;
+  const xc=(i)=>PAD.l+i*step+step/2;
+  // grid
+  ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=PAD.t+cH/4*i;ctx.beginPath();ctx.moveTo(PAD.l,y);ctx.lineTo(W-PAD.r,y);ctx.stroke();}
+  // price labels
+  ctx.fillStyle='rgba(121,131,156,.7)';ctx.font='10px Inter,sans-serif';ctx.textAlign='right';
+  for(let i=0;i<=4;i++){const p=pMax-(pRange/4)*i;ctx.fillText('$'+p.toFixed(4),PAD.l-4,PAD.t+cH/4*i+4);}
+  // candles
+  data.forEach((d,i)=>{
+    const o=opens[i],h=highs[i],l=lows[i],c=closes[i];
+    const up=c>=o;const col=up?'#3fe0c5':'#ff7a7a';
+    ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1;
+    const x=xc(i);
+    ctx.beginPath();ctx.moveTo(x,px(h));ctx.lineTo(x,px(l));ctx.stroke();
+    const by=Math.min(px(o),px(c));const bh=Math.max(1,Math.abs(px(o)-px(c)));
+    ctx.fillRect(x-candleW/2,by,candleW,bh);
+  });
+  // EMA 20
+  const e20=ema(closes,20),e60=ema(closes,60);
+  [[e20,'#f7c948',1.5],[e60,'#a78bfa',1.5]].forEach(([vals,col,lw])=>{
+    ctx.strokeStyle=col;ctx.lineWidth=lw;ctx.beginPath();let started=false;
+    vals.forEach((v,i)=>{if(v===null)return;const x=xc(i),y=px(v);started?(ctx.lineTo(x,y)):(ctx.moveTo(x,y),started=true);});
+    ctx.stroke();
+  });
+  // x-axis time labels
+  const fmt=(ts)=>{const d=new Date(ts*1000);
+    if(_kper=='1d')return(d.getMonth()+1)+'-'+d.getDate();
+    return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+  ctx.fillStyle='rgba(121,131,156,.7)';ctx.textAlign='center';ctx.font='9.5px Inter,sans-serif';
+  const step2=Math.max(1,Math.floor(N/8));
+  for(let i=0;i<N;i+=step2){ctx.fillText(fmt(data[i][0]),xc(i),CH-6);}
+  // volume bars
+  vctx.clearRect(0,0,W,VH);
+  data.forEach((d,i)=>{
+    const v=vols[i],up=closes[i]>=opens[i];
+    vctx.fillStyle=up?'rgba(63,224,197,.55)':'rgba(255,122,122,.55)';
+    const bh=Math.max(1,(v/vMax)*(VH-6));
+    vctx.fillRect(xc(i)-candleW/2,VH-bh,candleW,bh);
+  });
+  // delta label
+  if(N>1){const first=closes[0],last=closes[N-1];const pct=((last-first)/first*100).toFixed(2);
+    const el=document.getElementById('kp_delta');
+    if(el){el.textContent=(pct>=0?'+':'')+pct+'%';el.style.color=pct>=0?'var(--ok)':'var(--bad)';}}
+  // crosshair
+  attachCrosshair(cc,vc,data,px,xc,step,PAD,CH,W,candleW);
+}
+function attachCrosshair(cc,vc,data,px,xc,step,PAD,CH,W,candleW){
+  cc.onmousemove=function(e){
+    const rect=cc.getBoundingClientRect();const mx=(e.clientX-rect.left)*(cc.width/cc.clientWidth/window.devicePixelRatio||1);
+    const i=Math.round((mx-PAD.l)/step-0.5);if(i<0||i>=data.length)return;
+    const d=data[i];const tip=document.getElementById('ktip');if(!tip)return;
+    const dt=new Date(d[0]*1000);
+    tip.style.display='block';
+    tip.innerHTML=`<b>${dt.toLocaleDateString()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}</b><br>`+
+      `O <b>${(+d[1]).toFixed(4)}</b>  H <b style=color:var(--ok)>${(+d[2]).toFixed(4)}</b>  L <b style=color:var(--bad)>${(+d[3]).toFixed(4)}</b>  C <b>${(+d[4]).toFixed(4)}</b><br>`+
+      `Vol <b>${(+d[5]).toLocaleString()}</b>`;
+    // reposition away from right edge
+    const tipW=180;const lx=e.clientX-rect.left;
+    tip.style.left=(lx+tipW>rect.width?lx-tipW-8:lx+12)+'px';
+  };
+  cc.onmouseleave=()=>{const t=document.getElementById('ktip');if(t)t.style.display='none';};
+}
 
 let CFG=null;
 async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch(e){return}CFG=d;
