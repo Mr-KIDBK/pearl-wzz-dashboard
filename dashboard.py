@@ -510,6 +510,7 @@ def active_rentals(account_id):
                         "price_label": i.get("price_label"),
                         "hashrate_th": i.get("hashrate_th"),
                         "created_epoch": i.get("started_epoch"),
+                        "state": i.get("state"),  # running/creating/downloading… 仅 running 才算"在跑"
                         "group": i.get("group")})
         return out
     for r in st.get("rented", []):
@@ -692,6 +693,11 @@ def reset_stats():
 
 
 # ---------- 总览数据 ----------
+def _is_running(machine):
+    """是否算"在跑": 非 salad 的活跃租约无 state(None)直接算; salad 按实例 state,
+    仅 'running' 算(排除 creating/downloading/allocating/stopping —— 这些已分配但还没在挖)。"""
+    return machine.get("state") in (None, "running")
+
 def build_summary():
     pool = pool_data()
     workers = pool.get("connected_workers", []) if isinstance(pool, dict) else []
@@ -703,7 +709,7 @@ def build_summary():
                       "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
     per_plat, running = {}, 0
     for acct in list_accounts():
-        n = len(active_rentals(acct))
+        n = sum(1 for m in active_rentals(acct) if _is_running(m))  # 只数真正在跑(salad 排除创建/下载中)
         plat = platform_of(acct)
         per_plat[plat] = per_plat.get(plat, 0) + n
         running += n
