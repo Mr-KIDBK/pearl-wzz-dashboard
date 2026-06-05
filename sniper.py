@@ -535,6 +535,7 @@ def rent_vast(config, match, state, live):
             blacklist_offer(state, "vast", offer_id, "offer_not_available", {"gpu": match["gpu"], "price": match["price"]})
         return False
     record_rent(state, "vast", offer_id, match["gpu"], match["price"], result)
+    state["rented"][-1]["env"] = {k: str(v) for k, v in env.items()}
     if isinstance(result, dict):
         log(f"Vast rent result: offer={offer_id} success={result.get('success')} contract={result.get('new_contract')}")
     else:
@@ -714,6 +715,105 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     return True
 
 
+HOST_FALLBACK_DEFAULT = "129.226.55.135:9000"
+
+
+def update_zero_tracking(rented, hashrate_th, now_ts=None):
+    """记录算力首次掉到 0 的时刻; 一旦 >0 即清除。用于判断"最近一段时间持续为 0"。"""
+    if now_ts is None:
+        now_ts = epoch_now()
+    if hashrate_th is not None and float(hashrate_th) > 0:
+        rented.pop("zero_since_epoch", None)
+    else:
+        rented.setdefault("zero_since_epoch", now_ts)
+
+
+def restart_instance_with_env(provider, instance_id, env):
+    """改 env 并触发同机重启。仅 RunPod 支持:
+    POST /v1/pods/{id}/update 改 env 会触发 reset、以新 env 重新拉起容器(官方文档:
+    "may trigger a reset of the instance to apply the requested changes effectively")。
+
+    Vast 不支持: 容器 env 在创建时烧死, PUT /api/v0/instances/{id}/ 只处理 state/label,
+    会静默忽略 env 字段且不重启 → 直接报错, 避免静默空操作白等一个观察窗口。"""
+    if provider == "runpod":
+        api_key = os.environ["RUNPOD_API_KEY"]
+        return request_json(
+            "POST",
+            f"https://rest.runpod.io/v1/pods/{instance_id}/update",
+            {"Authorization": f"Bearer {api_key}"},
+            {"env": env},
+            timeout=60,
+        )
+    raise ValueError(
+        f"restart_instance_with_env not supported for provider {provider} "
+        f"(only runpod supports in-place env change + restart; vast env is immutable post-create)"
+    )
+
+
+def try_host_fallback(config, provider, rented, instance_id):
+    """低效将销毁前的兜底: 若最近持续 0 算力且尚未切过 host, 把 PRL_HOST 切到备用地址并原机重启,
+    重置观察窗口再观察一轮; 返回 True 表示已执行兜底(调用方应跳过本次销毁)。
+
+    重启用创建时落库的完整 env(仅覆盖 PRL_HOST), 以保证 PRL_WORKER 等不变, 矿池仍能按原 worker 查算力。
+
+    仅 RunPod 支持: 其 POST /pods/{id}/update 改 env 会触发 reset、以新 env 重新拉起容器。
+    Vast 不支持原地改 env(env 在创建时烧进容器, PUT /instances/{id}/ 只收 state/label,
+    会静默忽略 env 且不重启)→ 对 vast 禁用本兜底, 命中低效直接走正常销毁。"""
+    if provider != "runpod":
+        return False
+    cfg = config.get(provider, {})
+    if not cfg.get("host_fallback_enabled", True):
+        return False
+    if rented.get("host_switched"):
+        return False
+    fallback_host = str(cfg.get("host_fallback_host", HOST_FALLBACK_DEFAULT)).strip()
+    if not fallback_host or fallback_host == str(config.get("prl_host", "")).strip():
+        return False
+    zero_since = float(rented.get("zero_since_epoch") or 0)
+    zero_window = int(cfg.get("host_fallback_zero_seconds", 60))
+    if zero_since <= 0 or epoch_now() - zero_since < zero_window:
+        return False
+    env = dict(rented.get("env") or {})
+    if not env:
+        # 创建时未落库 env(老条目): 用 make_env 重建 (vast 的 external_id=offer_id 可复原同名 worker;
+        # runpod 老条目的 worker 名可能改变, 仅作降级兜底)。
+        old_price = cfg.get("_current_price")
+        cfg["_current_price"] = float(rented.get("price") or 0)
+        try:
+            env = make_env(config, provider, rented.get("gpu"), rented.get("external_id"))
+        finally:
+            if old_price is None:
+                cfg.pop("_current_price", None)
+            else:
+                cfg["_current_price"] = old_price
+    env = {k: str(v) for k, v in env.items()}
+    env["PRL_HOST"] = fallback_host
+    try:
+        result = restart_instance_with_env(provider, instance_id, env)
+    except Exception as exc:
+        log(f"{provider} host fallback restart failed: instance={instance_id} host={fallback_host} error={type(exc).__name__}: {exc}")
+        return False
+    now_ts = epoch_now()
+    rented["host_switched"] = True
+    rented["host_switched_epoch"] = now_ts
+    rented["host_switched_to"] = fallback_host
+    rented["env"] = env
+    rented["hashrate_last_check_epoch"] = now_ts
+    rented.pop("low_efficiency_since_epoch", None)
+    rented.pop("low_efficiency_reason", None)
+    rented.pop("zero_since_epoch", None)
+    required = int(cfg.get("low_efficiency_stop_seconds", 900))
+    log(f"{provider} host fallback: instance={instance_id} gpu={rented.get('gpu')} zero hashrate {int(zero_window)}s+; switched PRL_HOST -> {fallback_host}, restarting and re-observing {required}s result={result}")
+    notify(
+        config,
+        f"{provider} host fallback",
+        f"{rented.get('gpu')} instance={instance_id} zero hashrate; switched host to {fallback_host} and restarted",
+        priority="high",
+        tags=["arrows_counterclockwise", provider],
+    )
+    return True
+
+
 def apply_low_efficiency_policy(config, state, provider, rented, hashrate_th, price, instance_id, stop_fn, details=None):
     cfg = config.get(provider, {})
     if hashrate_th is None or price <= 0:
@@ -724,6 +824,7 @@ def apply_low_efficiency_policy(config, state, provider, rented, hashrate_th, pr
     low = (min_eff > 0 and efficiency < min_eff) or (min_hash is not None and hashrate_th < float(min_hash))
     rented["last_hashrate_th"] = round(hashrate_th, 3)
     rented["last_hashrate_efficiency"] = round(efficiency, 3)
+    update_zero_tracking(rented, hashrate_th)
     if not low:
         rented.pop("low_efficiency_since_epoch", None)
         rented.pop("low_efficiency_reason", None)
@@ -733,6 +834,10 @@ def apply_low_efficiency_policy(config, state, provider, rented, hashrate_th, pr
         first_low_epoch = now_ts
         if provider == "runpod" and cfg.get("backdate_low_efficiency_for_existing", True):
             first_low_epoch = float(rented.get("created_epoch") or now_ts)
+            switched_epoch = float(rented.get("host_switched_epoch") or 0)
+            if switched_epoch:
+                # 已切过 host 重启的, 计时起点不再回填到原创建时刻, 而是从重启时刻起, 给足重新观察的窗口
+                first_low_epoch = max(first_low_epoch, switched_epoch)
         rented["low_efficiency_since_epoch"] = first_low_epoch
         rented["low_efficiency_reason"] = f"hashrate={hashrate_th:.2f}TH efficiency={efficiency:.1f}TH_per_usd_hour"
         log(f"{provider} low efficiency observed: instance={instance_id} gpu={rented.get('gpu')} price=${price:.3f}/h hashrate={hashrate_th:.2f}TH efficiency={efficiency:.1f}")
@@ -741,6 +846,8 @@ def apply_low_efficiency_policy(config, state, provider, rented, hashrate_th, pr
     duration = now_ts - float(rented["low_efficiency_since_epoch"])
     required = int(cfg.get("low_efficiency_stop_seconds", 900))
     if duration < required:
+        return False
+    if try_host_fallback(config, provider, rented, instance_id):
         return False
     reason = f"low_efficiency:{hashrate_th:.2f}TH:{efficiency:.1f}TH_per_usd_hour:{int(duration)}s"
     rented["active"] = False
@@ -983,6 +1090,11 @@ def reconcile_runpod_instances(config, state):
             rented["inactive_reason"] = "missing_from_runpod_pods"
             continue
         status = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
+        switched_epoch = float(rented.get("host_switched_epoch") or 0)
+        if status in terminal and switched_epoch and (now_ts - switched_epoch) < grace:
+            # 刚切 host 重启, pod 可能短暂 STOPPED/EXITED; 本轮跳过删除, 等切换宽限期后再判
+            log(f"RunPod host-switch grace: pod={pod_id} status={status} skip delete ({int(now_ts-switched_epoch)}s since switch)")
+            continue
         if status in terminal:
             rented["active"] = False
             rented["inactive_reason"] = f"pod_terminal:{status}"
@@ -1017,6 +1129,10 @@ def reconcile_runpod_instances(config, state):
         if machine_id:
             rented["machine_id"] = machine_id
         age = now_ts - float(rented.get("created_epoch") or now_ts)
+        switched_epoch = float(rented.get("host_switched_epoch") or 0)
+        if switched_epoch:
+            # 切 host 重启后, 以重启时刻为准重新计算"机龄", 给足新宽限期
+            age = min(age, now_ts - switched_epoch)
         if age < grace:
             continue
         last_check = float(rented.get("hashrate_last_check_epoch") or 0)
@@ -1258,6 +1374,7 @@ def try_runpod_create(config, state, live):
                         request_json("DELETE", f"https://rest.runpod.io/v1/pods/{pod_id}", {"Authorization": f"Bearer {api_key}"}, timeout=30)
                     continue
                 record_rent(state, "runpod", result.get("id"), gpu_type, cost, result)
+                state["rented"][-1]["env"] = {k: str(v) for k, v in env.items()}
                 log(f"RunPod rent result: cloud={cloud_type} gpu={gpu_type} cost=${cost:.3f}/h id={result.get('id')}")
                 notify(
                     config,
