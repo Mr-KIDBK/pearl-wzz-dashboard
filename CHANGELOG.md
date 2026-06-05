@@ -16,6 +16,27 @@
 
 ---
 
+## [看板产出统计与体验改版] — 2026-06-05
+
+围绕收益可视化与界面体验的一批改动（前端为主），与多账号合并在同一天完成。
+
+### Added — 新增
+- **累计产出 / 累计折合利润卡**：替换原「待结算 / 近期已结算 PEARL」两卡。产出 = 矿池正向 epoch credit（提现不计）+ 当前 pending，**自重置起算**（从 0 单调起涨，结算不跳变、提现不减）；折合利润 = 产出 × 币价 − 累计租金。
+- **币价配置 + 重置统计**（仅 admin）：可填币价（默认 0.75）实时折算；一键重置租金/产出/利润从当前起算（保留币价）。
+- **亮 / 暗双主题**：默认亮色，左下角透明切换钮，`localStorage` 持久化 + 防首屏闪烁。
+- **文档页**：导航「文档」组 → 工具说明（含本地部署四步 + docker 拉取原理）+ 挖珠教程（小白四步：钱包 → 租卡 → 配置 → 卖币 SafeTrade）。
+- **工具集**新增「交易平台」组（SafeTrade / Pearl OTC / OKX Web3）。
+- 左下页脚加 **GitHub 项目链接**（与主题切换并排）。
+
+### Changed — 变更
+- 导航改名：总览 → **仪表盘**、工具链接 → **工具集**、配置 → **配置工作台**；favicon 去黑底透明、品牿字距加宽、菜单加极细分隔线、淡化选中背景；钱包卡按钮 ACCOUNT → 改 **PearlHash →**。
+- 总览各平台租用情况**按在跑机器数排序**（有机器的账号在上）。
+
+### Fixed — 修复
+- **Salad 移动卡价格显示区间而非单价**：`gpu_key` 未剥结尾「 GPU」后缀（`RTX 5090 Laptop GPU`）致名字不匹配价表 → fallback 到整档 min–max 区间。
+- **侧栏滚动到页面底部时 footer 上移**：侧栏 `position:sticky` 改 `fixed`，常驻左下。
+- **配置侧栏账号项要进配置页才出现**：改由总览加载时即用 `/api/rentals` 填充。
+
 ## [多账号支持] — 2026-06-05
 
 将单账号架构升级为「多平台 × 多账号」,并修复了一批 dashboard 显示缺陷。`sniper.py` 监控/抢卡核心**未改动**,改动集中在启动脚本、dashboard 与配置组织。
@@ -53,3 +74,30 @@
 ---
 
 *本次升级由 Claude (Anthropic · Claude Code) 协助设计与实现 — 2026-06-05*（并非协助）
+
+---
+
+> 以下为 CHANGELOG 建立之前的历史里程碑，据 `docs/plan-archive.md` / `docs/issues.md` 补记，保持变更记录完整。
+
+## [项目首日：抢租核心 + 网页看板 + 开源化 + 稳健性] — 2026-06-04
+
+项目第一天，从零搭出整套系统（M1 抢租核心 → M2 网页看板 → M3 开源化 → M4 稳健性打磨）。
+
+### Added — 新增
+- **抢租核心 `sniper.py`**（纯标准库）：Vast.ai / RunPod / TensorDock / Salad 扫描 → 命中价格 & 算力阈值租用 → 监控算力 → 低效/不挖自动销毁拉黑；每平台独立进程 + 独立 `state.<plat>.json`/`logs/<plat>.log` 隔离（`SNIPER_STATE_PATH`/`LOG_PATH`，见 ISS-002）；`--config`/`--live`/`--once` CLI。
+- **网页看板 `dashboard.py`**（纯 stdlib `http.server`，:8787）：密码门 + 无状态签名 cookie；总览（钱包/算力/累计租金/待结算·已结算 PEARL/各平台余额 + 预计花完时间）、配置页（公共 + 4 平台二级标签，表单 + raw JSON）、工具链接、后台日志 tail；暂停/恢复租用、重启、关机、改密码；暗色主题、左侧导航。
+- 看板**访客(偷窥)模式**（签名 cookie 区分 admin/guest，访客免密码只读）；发光珍珠 **logo + SVG favicon**。
+- **Windows(PowerShell)启停脚本** `start-all.ps1` / `stop-all.ps1`（对齐 Linux 版）。
+- Salad **按 GPU 型号判健康**（逐实例按 machine_id 从矿池解析型号取 `min_hashrate_th`；`normalize_gpu` 扩 40/50 系列）。
+- **开源化**：`.example` 配置模板 + README + `.gitignore`（保护 `.env`/`keys/`/真实 config/state/logs/docs），推公开仓库 `github.com/kuzicode/pearl-wzz-dashboard`（仅 `gpu-sniper-shareable/` 子目录）。
+
+### Fixed — 修复
+- Salad **坏实例(完全无算力日志)不被回收**一直烧钱 → 矿池兜底取算力、查不到按 0 计时回收（ISS-010）。
+- 看板**全称 GPU key**（`NVIDIA GeForce RTX 5090`）表格空 → 保存用空值覆盖丢失（ISS-010）。
+- Salad 踢出门槛「每行型号」不生效 + 24h 计时器掩盖误杀 4070（ISS-009）。
+- TensorDock 无算力按 0 回收；RunPod 不挖的 dud pod 回收（ISS-005）。
+- Vast 日志 S3 上传竞态 403 重试（ISS-003）；Salad 日志默认 UA 被 WAF 挡 403（ISS-004）；`pkill -f dashboard.py` 自杀（ISS-001）。
+
+### Changed — 变更
+- 配置合并到**单一 `.env`**（值单引号转义防注入）；移除 byobu 依赖，改 **nohup/setsid 一键起停**。
+- Codex review 修复 5 处（成本护栏盲点 / 回收漏洞 / key 注入等）。

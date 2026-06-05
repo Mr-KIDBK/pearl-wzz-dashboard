@@ -1177,7 +1177,8 @@ header{background:rgba(15,22,35,.72);backdrop-filter:blur(10px);border-bottom:1p
 .tab:hover{color:var(--hi);background:rgba(255,255,255,.04)}
 .tab.on{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;font-weight:700;box-shadow:0 4px 16px -6px rgba(63,224,197,.5)}
 .clock{margin-left:auto;color:var(--mut);font-size:12px}
-.srow{display:flex;align-items:center;justify-content:flex-end;gap:9px;margin-bottom:10px}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-bottom:9px}
+.sicons{display:flex;align-items:center;gap:9px;flex-shrink:0}
 .tbtn,.ghlink{width:26px;height:26px;border-radius:7px;border:1px solid var(--bd);background:transparent;color:var(--mut);font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.14s;opacity:.75;backdrop-filter:blur(4px);flex-shrink:0}
 .tbtn:hover,.ghlink:hover{border-color:var(--g2);color:var(--acc);opacity:1;background:rgba(127,127,127,.08)}
 .ghlink svg{display:block}
@@ -1273,7 +1274,7 @@ summary:hover{color:var(--acc)}
 .err{color:var(--bad);font-size:11.5px;margin-top:8px;min-height:14px}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:flex;min-height:100vh}
-.side{width:210px;flex-shrink:0;background:rgba(15,22,35,.55);border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.side{width:210px;flex-shrink:0;background:rgba(15,22,35,.55);border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;overflow-y:auto}
 .sbrand{display:flex;align-items:center;gap:11px;margin-bottom:24px}
 .sbrand .bt{font-weight:600;font-size:16.5px;line-height:1.3;color:var(--hi);letter-spacing:.2em;font-feature-settings:"palt"}
 .sbrand .bt small{display:block;font-size:9px;letter-spacing:.34em;color:var(--mut);font-weight:500;margin-top:6px;font-family:var(--mono)}
@@ -1292,10 +1293,10 @@ background:radial-gradient(circle,rgba(255,255,255,.95),rgba(255,255,255,0) 70%)
 .ni.sub{padding-left:24px;font-size:12.5px}
 .nigrp{margin:13px 0 5px;padding:13px 13px 0;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);font-weight:700;border-top:1px solid var(--bd)}
 .sfoot{margin-top:auto;color:var(--mut);font-size:11px;font-family:var(--mono);padding:12px 13px 0;border-top:1px solid var(--bd)}
-main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
+main{flex:1;min-width:0;margin-left:210px;padding:26px 32px;display:flex;justify-content:center}
 .inner{width:100%;max-width:1040px}
 .b-mini{padding:7px 12px;font-size:11.5px}
-.suser{color:var(--tx);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.suser{color:var(--tx);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;min-width:0}
 .suser .dot{width:7px;height:7px;border-radius:50%;background:var(--g2);box-shadow:0 0 8px var(--g2);flex-shrink:0}
 .lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px}
 .doc{max-width:880px}
@@ -1347,7 +1348,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 <div class="ni sub" data-nav=doc:guide onclick="nav('doc:guide')">工具说明</div>
 <div class="ni sub" data-nav=doc:tutorial onclick="nav('doc:tutorial')">挖珠教程</div>
 </nav>
-<div class=sfoot><div class=srow><a class=ghlink href="https://github.com/kuzicode/pearl-wzz-dashboard" target=_blank rel=noopener title="GitHub · pearl-wzz-dashboard"><svg viewBox="0 0 16 16" width=15 height=15 fill=currentColor aria-hidden=true><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class=tbtn id=tbtn onclick=toggleTheme() title="切换亮 / 暗">🌙</button></div><div class=suser><span class=dot></span><span id=uname>admin</span></div><div id=clock></div>
+<div class=sfoot><div class=srow><div class=suser><span class=dot></span><span id=uname>admin</span></div><div class=sicons><a class=ghlink href="https://github.com/kuzicode/pearl-wzz-dashboard" target=_blank rel=noopener title="GitHub · pearl-wzz-dashboard"><svg viewBox="0 0 16 16" width=15 height=15 fill=currentColor aria-hidden=true><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class=tbtn id=tbtn onclick=toggleTheme() title="切换亮 / 暗">🌙</button></div></div><div id=clock></div>
 <div class=logout onclick=logout()>⏏ 退出登录</div></div>
 </aside>
 <main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=doc style=display:none></div><div id=cf style=display:none></div></div></main>
@@ -1411,7 +1412,7 @@ document.getElementById('ov').innerHTML=`
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
 <div class=row style=flex-shrink:0;gap:8px>
 <button class=b-mini onclick="copyAddr('${esc(d.wallet)}')">复制</button>
-<div class=go onclick="window.open('${acct}','_blank')">ACCOUNT →</div></div></div>
+<div class=go onclick="window.open('${acct}','_blank')">PearlHash →</div></div></div>
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
