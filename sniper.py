@@ -630,10 +630,6 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     if age < int(cfg.get("hashrate_grace_seconds", 300)):
         return False
     now_ts = epoch_now()
-    switched_epoch = float(rented.get("host_switched_epoch") or 0)
-    if switched_epoch and now_ts - switched_epoch < int(cfg.get("hashrate_grace_seconds", 300)):
-        # 切 host 重启后给一段新宽限期, 等容器重新拉起再开始判定
-        return False
     last_check = float(rented.get("hashrate_last_check_epoch") or 0)
     interval = int(cfg.get("hashrate_watch_interval_seconds", 30))
     if now_ts - last_check < interval:
@@ -668,7 +664,6 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     low = efficiency < min_eff or (min_hash is not None and hashrate_th < float(min_hash))
     rented["last_hashrate_th"] = round(hashrate_th, 3)
     rented["last_hashrate_efficiency"] = round(efficiency, 3)
-    update_zero_tracking(rented, hashrate_th, now_ts)
     if not low:
         rented.pop("low_efficiency_since_epoch", None)
         rented.pop("low_efficiency_reason", None)
@@ -681,8 +676,6 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     duration = now_ts - float(rented["low_efficiency_since_epoch"])
     required = int(cfg.get("low_efficiency_stop_seconds", 900))
     if duration < required:
-        return False
-    if try_host_fallback(config, "vast", rented, contract_id):
         return False
     reason = f"low_efficiency:{hashrate_th:.2f}TH:{efficiency:.1f}TH_per_usd_hour:{int(duration)}s"
     rented["active"] = False
@@ -736,7 +729,12 @@ def update_zero_tracking(rented, hashrate_th, now_ts=None):
 
 
 def restart_instance_with_env(provider, instance_id, env):
-    """改 env 并触发同机重启 (vast / runpod)。更新 env 会让平台重置容器但保留所租机器。"""
+    """改 env 并触发同机重启。仅 RunPod 支持:
+    POST /v1/pods/{id}/update 改 env 会触发 reset、以新 env 重新拉起容器(官方文档:
+    "may trigger a reset of the instance to apply the requested changes effectively")。
+
+    Vast 不支持: 容器 env 在创建时烧死, PUT /api/v0/instances/{id}/ 只处理 state/label,
+    会静默忽略 env 字段且不重启 → 直接报错, 避免静默空操作白等一个观察窗口。"""
     if provider == "runpod":
         api_key = os.environ["RUNPOD_API_KEY"]
         return request_json(
@@ -746,24 +744,22 @@ def restart_instance_with_env(provider, instance_id, env):
             {"env": env},
             timeout=60,
         )
-    if provider == "vast":
-        api_key = os.environ["VAST_API_KEY"]
-        return request_json(
-            "PUT",
-            f"https://console.vast.ai/api/v0/instances/{instance_id}/",
-            {"Authorization": f"Bearer {api_key}"},
-            {"env": env},
-            timeout=60,
-        )
-    raise ValueError(f"restart not supported for provider {provider}")
+    raise ValueError(
+        f"restart_instance_with_env not supported for provider {provider} "
+        f"(only runpod supports in-place env change + restart; vast env is immutable post-create)"
+    )
 
 
 def try_host_fallback(config, provider, rented, instance_id):
     """低效将销毁前的兜底: 若最近持续 0 算力且尚未切过 host, 把 PRL_HOST 切到备用地址并原机重启,
     重置观察窗口再观察一轮; 返回 True 表示已执行兜底(调用方应跳过本次销毁)。
 
-    重启用创建时落库的完整 env(仅覆盖 PRL_HOST), 以保证 PRL_WORKER 等不变, 矿池仍能按原 worker 查算力。"""
-    if provider not in ("vast", "runpod"):
+    重启用创建时落库的完整 env(仅覆盖 PRL_HOST), 以保证 PRL_WORKER 等不变, 矿池仍能按原 worker 查算力。
+
+    仅 RunPod 支持: 其 POST /pods/{id}/update 改 env 会触发 reset、以新 env 重新拉起容器。
+    Vast 不支持原地改 env(env 在创建时烧进容器, PUT /instances/{id}/ 只收 state/label,
+    会静默忽略 env 且不重启)→ 对 vast 禁用本兜底, 命中低效直接走正常销毁。"""
+    if provider != "runpod":
         return False
     cfg = config.get(provider, {})
     if not cfg.get("host_fallback_enabled", True):
@@ -936,12 +932,6 @@ def reconcile_vast_instances(config, state):
         age = epoch_now() - float(created_epoch or epoch_now())
         timed_out = age >= creating_timeout and (cur_state in pending_states or actual in pending_states) and not status_msg
         fractional_gpu = inst.get("gpu_frac") is not None and float(inst.get("gpu_frac") or 0) < float(config.get("vast", {}).get("min_gpu_frac", 1.0))
-        switched_epoch = float(rented.get("host_switched_epoch") or 0)
-        in_switch_grace = bool(switched_epoch) and (epoch_now() - switched_epoch) < int(config.get("vast", {}).get("hashrate_grace_seconds", 300))
-        if in_switch_grace and (cur_state in bad_states or intended in bad_states or startup_error or timed_out) and not fractional_gpu:
-            # 刚切 host 重启, 容器可能短暂 stopped/loading/exited; 本轮跳过销毁, 等切换宽限期后再判
-            log(f"Vast host-switch grace: contract={contract_id} state={cur_state}/{intended} skip destroy ({int(epoch_now()-switched_epoch)}s since switch)")
-            continue
         if cur_state in bad_states or intended in bad_states or startup_error or timed_out or fractional_gpu:
             reason = f"bad_state:{cur_state}/{intended}"
             if startup_error:
