@@ -1349,7 +1349,7 @@ document.getElementById('ov').innerHTML=`
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
 <div class=row style=flex-shrink:0;gap:8px>
 <button class=b-mini onclick="copyAddr('${esc(d.wallet)}')">复制</button>
-<div class=go onclick="window.open('${acct}','_blank')">ACCOUNT →</div></div></div>
+<div class=go onclick="window.open('${acct}','_blank')">PearlHash →</div></div></div>
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
