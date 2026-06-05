@@ -1324,12 +1324,13 @@ async function saveCoinPrice(){let v=parseFloat(document.getElementById('cpin').
 async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
 async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
+if(ROLE=='admin'){let _ce=document.getElementById('cfaccts');if(_ce)_ce.innerHTML=Object.keys(r).map(a=>`<div class="ni sub adm${(view=='cf'&&subtab==a)?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc((r[a]&&r[a].label)||a)}</div>`).join('');}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
-let plat='';for(const aid of Object.keys(r)){const v=r[aid];const p=v.platform||aid;
+let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
 let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
 let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
@@ -1365,7 +1366,7 @@ ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:
 
 let CFG=null;
 async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch(e){return}CFG=d;
-let nv=Object.keys(d.platforms).map(a=>`<div class="ni sub${subtab==a?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc(d.platforms[a].label||a)}</div>`).join('');
+let nv=Object.keys(d.platforms).map(a=>`<div class="ni sub adm${subtab==a?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc(d.platforms[a].label||a)}</div>`).join('');
 let ce=document.getElementById('cfaccts');if(ce)ce.innerHTML=nv;
 document.getElementById('cf').innerHTML=subtab=='common'?commonHtml(d):platformHtml(d.platforms[subtab],subtab);}
 function commonHtml(d){let c=d.common;let diff=d.common_diff||{};
