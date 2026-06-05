@@ -79,6 +79,8 @@ SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
 POOL_TTL = 30.0
 _lock = threading.Lock()
+# pearl 折算币价(USD/coin); 可用环境变量 COIN_PRICE_USD 覆盖, 默认 0.75。
+COIN_PRICE_USD = float(os.environ.get("COIN_PRICE_USD") or 0.75)
 
 
 # ---------- 读 ----------
@@ -215,8 +217,9 @@ def iso_to_epoch(s):
         return None
 
 def gpu_key(name):
-    """GPU 名归一化: 去掉 ' (xx GB)' 后缀并小写, 用于跨数据源匹配。"""
-    return re.sub(r"\s*\(.*?\)\s*$", "", str(name or "")).strip().lower()
+    """GPU 名归一化: 去掉 ' (xx GB)' 后缀、结尾 'GPU' 字样(移动卡如 'RTX 5090 Laptop GPU')并小写, 用于跨数据源匹配。"""
+    s = re.sub(r"\s*\(.*?\)\s*$", "", str(name or "")).strip().lower()
+    return re.sub(r"\s+gpu$", "", s).strip()
 
 # Salad 官网各 GPU 档价(low/medium/high), 仅作 gpu-classes API 失败时的兜底
 SALAD_GPU_PRICES = {
@@ -458,7 +461,97 @@ def spend_loop():
             tick_spend()
         except Exception:
             pass
+        try:
+            tick_output()
+        except Exception:
+            pass
         time.sleep(60)
+
+
+# ---------- 累计产出(自看板起算) ----------
+# 产出 = 矿池 balance_transactions 里的正向 epoch credit(负向 Auto Payment 是提现, 不算产出)
+# + 当前待结算 pending。首次观测时把已有 credit 标记为基线、记录起始 pending,
+# 之后只累加新出现的 credit; 显示值 = 新增已结算 + 当前 pending - 起始 pending(从 0 起涨)。
+def tick_output(pool=None):
+    if pool is None:
+        pool = pool_data()
+    if not isinstance(pool, dict):
+        return float(read_json(STATS_PATH, {}).get("cumulative_output", 0.0))
+    pending = float((pool.get("pending_rewards") or {}).get("total_pending") or 0)
+    credits = [(int(t.get("timestamp") or 0), float(t.get("amount") or 0))
+               for t in (pool.get("balance_transactions") or [])
+               if float(t.get("amount") or 0) > 0]
+    with _lock:
+        s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
+        if not s.get("output_init"):
+            s["output_init"] = True
+            s["output_last_credit_ts"] = max([ts for ts, _ in credits], default=0)
+            s["output_start_pending"] = pending
+            s["output_settled_acc"] = 0.0
+        else:
+            last = int(s.get("output_last_credit_ts") or 0)
+            newmax = last
+            for ts, amt in credits:
+                if ts > last:
+                    s["output_settled_acc"] = float(s.get("output_settled_acc") or 0.0) + amt
+                    if ts > newmax:
+                        newmax = ts
+            s["output_last_credit_ts"] = newmax
+        cumulative = (float(s.get("output_settled_acc") or 0.0) + pending
+                      - float(s.get("output_start_pending") or 0.0))
+        if cumulative < 0:
+            cumulative = 0.0
+        s["cumulative_output"] = cumulative
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+        return cumulative
+
+
+# ---------- 币价 / 重置统计 ----------
+def coin_price():
+    try:
+        v = read_json(STATS_PATH, {}).get("coin_price_usd")
+        return float(v) if v is not None else COIN_PRICE_USD
+    except Exception:
+        return COIN_PRICE_USD
+
+def set_coin_price(v):
+    try:
+        p = float(v)
+    except Exception:
+        return {"error": "币价无效"}
+    if not (0 <= p <= 1e6):
+        return {"error": "币价超出范围"}
+    with _lock:
+        s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
+        s["coin_price_usd"] = p
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+    return {"ok": True, "coin_price_usd": p}
+
+def reset_stats():
+    """累计租金/产出/利润全部清零, 从现在重新起算; 保留已设的币价。"""
+    with _lock:
+        old = read_json(STATS_PATH, {})
+        now = time.time()
+        s = {"cumulative_usd": 0.0, "current_hourly_usd": 0.0,
+             "last_epoch": now, "reset_epoch": now}
+        if old.get("coin_price_usd") is not None:
+            s["coin_price_usd"] = old["coin_price_usd"]
+        # 不写 output_* → 下次 tick_output 自动以当前 pending 重新基线
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+    try:
+        tick_output()   # 立刻重新基线产出, 卡片即时归零
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 # ---------- 总览数据 ----------
@@ -477,20 +570,23 @@ def build_summary():
         per_plat[plat] = n
         running += n
     stats = read_json(STATS_PATH, {})
-    pending = recent = 0.0
-    if isinstance(pool, dict):
-        pending = float((pool.get("pending_rewards") or {}).get("total_pending") or 0)
-        recent = sum(float(t.get("amount") or 0) for t in (pool.get("balance_transactions") or []))
+    cp = coin_price()
+    rent_usd = round(float(stats.get("cumulative_usd", 0.0)), 4)
+    output = round(tick_output(pool), 4)     # 累计产出 pearl(自重置起算)
+    output_usd = round(output * cp, 2)       # 折合 USD
     return {
         "wallet": prl_address(),
         "running_machines": running,
         "running_by_platform": per_plat,
         "total_hashrate_th": round(total_th, 2),
         "workers": wlist,
-        "cumulative_rent_usd": round(float(stats.get("cumulative_usd", 0.0)), 4),
+        "cumulative_rent_usd": rent_usd,
         "current_hourly_usd": round(float(stats.get("current_hourly_usd", 0.0)), 4),
-        "coins_pending": round(pending, 4),
-        "coins_recent_settled": round(recent, 4),
+        "coin_price_usd": cp,
+        "cumulative_output": output,
+        "cumulative_output_usd": output_usd,
+        "cumulative_profit_usd": round(output_usd - rent_usd, 2),
+        "stats_since": int(float(stats.get("reset_epoch") or stats.get("last_epoch") or 0)),
         "pool_error": pool.get("_error") if isinstance(pool, dict) else None,
         "ts": int(time.time()),
     }
@@ -847,6 +943,10 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, restart_platform(str(data.get("platform", ""))))
         if path == "/api/dashboard-password":
             return self._send(200, set_dashboard_password(data.get("password", "")))
+        if path == "/api/coin-price":
+            return self._send(200, set_coin_price(data.get("price")))
+        if path == "/api/reset-stats":
+            return self._send(200, reset_stats())
         return self._send(404, {"error": "not found"})
 
 
@@ -1026,11 +1126,14 @@ async function initRole(){try{const m=await fetch('/api/me');if(m.ok){const d=aw
 function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
+async function saveCoinPrice(){let v=parseFloat(document.getElementById('cpin').value);if(isNaN(v)||v<0){toast('币价无效');return;}try{let r=await api('/api/coin-price',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:v})});if(r&&r.ok){toast('币价已更新 $'+v);refresh();}else toast((r&&r.error)||'保存失败');}catch(e){}}
+async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
 async function renderOverview(){let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
+let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
@@ -1051,10 +1154,16 @@ document.getElementById('ov').innerHTML=`
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
-<div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自看板起算</div></div>
-<div class=card><div class=k>待结算 pearl</div><div class=v style=color:var(--acc)>${fnum(d.coins_pending,4)}</div></div>
-<div class=card><div class=k>近期已结算 pearl</div><div class=v>${fnum(d.coins_recent_settled,4)}</div></div>
-</div>${pe}
+<div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自重置起算</div></div>
+<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · 自重置起算 @ $${fnum(d.coin_price_usd,2)}/币</div></div>
+<div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>产出折合 − 累计租金</div></div>
+</div>
+${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+<label class=muted style="font-size:12px">币价 $<input id=cpin type=number step=0.01 min=0 value="${d.coin_price_usd}" style="width:78px;margin-left:4px;background:#0e1422;border:1px solid #243049;color:#e7eef9;border-radius:7px;padding:4px 7px"></label>
+<button class=b-mini onclick="saveCoinPrice()">保存币价</button>
+<button class=b-bad onclick="resetStats()">重置统计</button>
+${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:''}
+</div>`:''}${pe}
 <div class=sec><div class=lbl>矿池在挖 WORKER</div><table><tr><th>Worker</th><th>GPU</th><th>算力</th><th>IP</th></tr>${wk}</table></div>
 <div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;}
 
