@@ -1134,9 +1134,10 @@ header{background:rgba(15,22,35,.72);backdrop-filter:blur(10px);border-bottom:1p
 .tab:hover{color:var(--hi);background:rgba(255,255,255,.04)}
 .tab.on{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;font-weight:700;box-shadow:0 4px 16px -6px rgba(63,224,197,.5)}
 .clock{margin-left:auto;color:var(--mut);font-size:12px}
-.srow{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.tbtn{width:26px;height:26px;border-radius:7px;border:1px solid var(--bd);background:transparent;color:var(--mut);font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.14s;opacity:.75;backdrop-filter:blur(4px);flex-shrink:0}
-.tbtn:hover{border-color:var(--g2);color:var(--acc);opacity:1;background:rgba(127,127,127,.08)}
+.srow{display:flex;align-items:center;justify-content:flex-end;gap:9px;margin-bottom:10px}
+.tbtn,.ghlink{width:26px;height:26px;border-radius:7px;border:1px solid var(--bd);background:transparent;color:var(--mut);font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.14s;opacity:.75;backdrop-filter:blur(4px);flex-shrink:0}
+.tbtn:hover,.ghlink:hover{border-color:var(--g2);color:var(--acc);opacity:1;background:rgba(127,127,127,.08)}
+.ghlink svg{display:block}
 .wrap{max-width:1180px;margin:24px auto;padding:0 20px}
 .lbl{color:var(--mut);font-size:11px;letter-spacing:1.3px;font-weight:600;text-transform:uppercase;margin:0 0 12px;display:flex;align-items:center}
 .lbl:before{content:"";display:inline-block;width:16px;height:2px;border-radius:2px;margin-right:9px;background:linear-gradient(90deg,var(--g1),var(--g2))}
@@ -1282,7 +1283,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 <div class="ni sub" data-nav=doc:guide onclick="nav('doc:guide')">工具说明</div>
 <div class="ni sub" data-nav=doc:tutorial onclick="nav('doc:tutorial')">挖珠教程</div>
 </nav>
-<div class=sfoot><div class=srow><div class=suser><span class=dot></span><span id=uname>admin</span></div><button class=tbtn id=tbtn onclick=toggleTheme() title="切换亮 / 暗">🌙</button></div><div id=clock></div>
+<div class=sfoot><div class=srow><a class=ghlink href="https://github.com/kuzicode/pearl-wzz-dashboard" target=_blank rel=noopener title="GitHub · pearl-wzz-dashboard"><svg viewBox="0 0 16 16" width=15 height=15 fill=currentColor aria-hidden=true><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class=tbtn id=tbtn onclick=toggleTheme() title="切换亮 / 暗">🌙</button></div><div class=suser><span class=dot></span><span id=uname>admin</span></div><div id=clock></div>
 <div class=logout onclick=logout()>⏏ 退出登录</div></div>
 </aside>
 <main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=doc style=display:none></div><div id=cf style=display:none></div></div></main>
