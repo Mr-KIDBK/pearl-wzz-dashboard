@@ -112,8 +112,12 @@ SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
 POOL_STALE_MAX = 90.0  # serve-stale: 后台刷新; 超此值才在请求线程兜底重拉
 _lock = threading.Lock()
-# pearl 折算币价(USD/coin); 可用环境变量 COIN_PRICE_USD 覆盖, 默认 0.75。
-COIN_PRICE_USD = float(os.environ.get("COIN_PRICE_USD") or 0.75)
+# pearl 折算币价 — 实时从 SafeTrade REST API 拉取(ticker.last), 失败时 fallback 到旧缓存或默认值
+COIN_PRICE_USD = float(os.environ.get("COIN_PRICE_USD") or 0.75)  # 兜底默认值(仅在首次拉取失败时用)
+PRICE_TTL      = 60.0   # 后台刷新间隔内视为新鲜; 请求线程直接读缓存
+PRICE_STALE_MAX = 300.0  # 超此值(后台异常)才在请求线程同步重拉
+_SAFETRADE_URL = "https://safetrade.com/api/v2/peatio/public/markets/prlusdt/tickers"
+_price_cache: dict = {}  # {"prl": (price_float, ts)}
 
 
 # ---------- 读 ----------
@@ -551,6 +555,10 @@ def spend_loop():
 
 def _refresh_once():
     """后台预热所有缓存一轮: 矿池 + 各账号 salad 实时 + 余额。让 HTTP 请求只读缓存、永不阻塞。"""
+    try:
+        fetch_coin_price(force=True)
+    except Exception:
+        pass
     pool_data(force=True)
     for acct in list_accounts():
         try:
@@ -610,29 +618,30 @@ def tick_output(pool=None):
         return cumulative
 
 
-# ---------- 币价 / 重置统计 ----------
-def coin_price():
+# ---------- 实时币价(SafeTrade REST) / 重置统计 ----------
+def fetch_coin_price(force=False):
+    """从 SafeTrade 拉取 PRL/USDT 最新成交价(ticker.last)。
+    serve-stale: 后台刷新; 超 PRICE_STALE_MAX 才在请求线程同步重拉。
+    API 失败时 fallback 到缓存旧值, 再 fallback 到 COIN_PRICE_USD 默认值。"""
+    now = time.time()
+    cached = _price_cache.get("prl")
+    if cached and not force and (now - cached[1] < PRICE_STALE_MAX):
+        return cached[0]
     try:
-        v = read_json(STATS_PATH, {}).get("coin_price_usd")
-        return float(v) if v is not None else COIN_PRICE_USD
+        req = urllib.request.Request(_SAFETRADE_URL,
+                                     headers={"User-Agent": "sniper-dashboard/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        p = float(d["ticker"]["last"])
+        _price_cache["prl"] = (p, now)
+        return p
     except Exception:
+        if cached:
+            return cached[0]
         return COIN_PRICE_USD
 
-def set_coin_price(v):
-    try:
-        p = float(v)
-    except Exception:
-        return {"error": "币价无效"}
-    if not (0 <= p <= 1e6):
-        return {"error": "币价超出范围"}
-    with _lock:
-        s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
-        s["coin_price_usd"] = p
-        try:
-            json.dump(s, open(STATS_PATH, "w"))
-        except Exception:
-            pass
-    return {"ok": True, "coin_price_usd": p}
+def coin_price():
+    return fetch_coin_price()
 
 def reset_stats():
     """累计租金/产出/利润全部清零, 从现在重新起算; 保留已设的币价。"""
@@ -685,6 +694,7 @@ def build_summary():
         "cumulative_rent_usd": rent_usd,
         "current_hourly_usd": round(float(stats.get("current_hourly_usd", 0.0)), 4),
         "coin_price_usd": cp,
+        "coin_price_live": _price_cache.get("prl") is not None,  # True=实时拉取, False=fallback
         "cumulative_output": output,
         "cumulative_output_usd": output_usd,
         "cumulative_profit_usd": round(output_usd - rent_usd, 2),
@@ -1089,8 +1099,6 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, restart_platform(str(data.get("platform", ""))))
         if path == "/api/dashboard-password":
             return self._send(200, set_dashboard_password(data.get("password", "")))
-        if path == "/api/coin-price":
-            return self._send(200, set_coin_price(data.get("price")))
         if path == "/api/reset-stats":
             return self._send(200, reset_stats())
         return self._send(404, {"error": "not found"})
@@ -1321,7 +1329,6 @@ function toggleTheme(){let cur=document.documentElement.getAttribute('data-theme
 function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
-async function saveCoinPrice(){let v=parseFloat(document.getElementById('cpin').value);if(isNaN(v)||v<0){toast('币价无效');return;}try{let r=await api('/api/coin-price',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:v})});if(r&&r.ok){toast('币价已更新 $'+v);refresh();}else toast((r&&r.error)||'保存失败');}catch(e){}}
 async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
 async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
@@ -1353,12 +1360,11 @@ document.getElementById('ov').innerHTML=`
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
 <div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自重置起算</div></div>
-<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · 自重置起算 @ $${fnum(d.coin_price_usd,2)}/币</div></div>
+<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · 自重置起算 @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div></div>
 <div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>产出折合 − 累计租金</div></div>
 </div>
 ${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
-<label class=muted style="font-size:12px">币价 $<input id=cpin type=number step=0.01 min=0 value="${d.coin_price_usd}" style="width:78px;margin-left:4px;background:#0e1422;border:1px solid #243049;color:#e7eef9;border-radius:7px;padding:4px 7px"></label>
-<button class=b-mini onclick="saveCoinPrice()">保存币价</button>
+<span class=muted style="font-size:12px">PRL/USDT <b style="color:var(--hi);font-family:var(--mono)">$${fnum(d.coin_price_usd,4)}</b>${d.coin_price_live?' <span style="color:var(--ok);font-size:10px;letter-spacing:.4px">● 实时</span>':' <span style="color:var(--warn);font-size:10px">离线</span>'}</span>
 <button class=b-bad onclick="resetStats()">重置统计</button>
 ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:''}
 </div>`:''}${pe}
