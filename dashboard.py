@@ -880,7 +880,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, build_summary())
             if path == "/api/rentals":
                 return self._send(200, build_rentals())
-            # ↓ 以下仅管理员;访客(guest)只能看总览数据与工具链接
+            # ↓ 以下仅管理员;访客(guest)只能看总览数据与工具集
             if role != "admin":
                 return self._send(403, {"error": "forbidden"})
             if path == "/api/config":
@@ -953,8 +953,8 @@ class H(BaseHTTPRequestHandler):
 HTML = r"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>今晚挖珍珠 · Pearl Sniper</title>
-<meta name=theme-color content="#0a0e17">
-<link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'><defs><radialGradient%20id='g'%20cx='37%25'%20cy='31%25'%20r='78%25'><stop%20offset='0%25'%20stop-color='%23f2fffc'/><stop%20offset='17%25'%20stop-color='%238ff3e6'/><stop%20offset='42%25'%20stop-color='%233fe0c5'/><stop%20offset='71%25'%20stop-color='%231aa6cf'/><stop%20offset='100%25'%20stop-color='%23083f57'/></radialGradient><radialGradient%20id='h'%20cx='50%25'%20cy='50%25'%20r='50%25'><stop%20offset='0%25'%20stop-color='%233fe0c5'%20stop-opacity='0.55'/><stop%20offset='100%25'%20stop-color='%233fe0c5'%20stop-opacity='0'/></radialGradient></defs><rect%20width='64'%20height='64'%20rx='15'%20fill='%230a0e17'/><circle%20cx='32'%20cy='32'%20r='27'%20fill='url(%23h)'/><circle%20cx='32'%20cy='32'%20r='17'%20fill='url(%23g)'/><ellipse%20cx='25.5'%20cy='24'%20rx='6.5'%20ry='4.6'%20fill='%23ffffff'%20opacity='0.92'/></svg>">
+<meta name=theme-color content="#f3f6fc">
+<link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'><defs><radialGradient%20id='g'%20cx='37%25'%20cy='31%25'%20r='78%25'><stop%20offset='0%25'%20stop-color='%23f2fffc'/><stop%20offset='17%25'%20stop-color='%238ff3e6'/><stop%20offset='42%25'%20stop-color='%233fe0c5'/><stop%20offset='71%25'%20stop-color='%231aa6cf'/><stop%20offset='100%25'%20stop-color='%23083f57'/></radialGradient><radialGradient%20id='h'%20cx='50%25'%20cy='50%25'%20r='50%25'><stop%20offset='0%25'%20stop-color='%233fe0c5'%20stop-opacity='0.55'/><stop%20offset='100%25'%20stop-color='%233fe0c5'%20stop-opacity='0'/></radialGradient></defs><circle%20cx='32'%20cy='32'%20r='27'%20fill='url(%23h)'/><circle%20cx='32'%20cy='32'%20r='17'%20fill='url(%23g)'/><ellipse%20cx='25.5'%20cy='24'%20rx='6.5'%20ry='4.6'%20fill='%23ffffff'%20opacity='0.92'/></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap');
 :root{--bg:#0a0e17;--bg2:#0f1623;--card:#141b2b;--card2:#172033;--bd:#23304a;--bd2:#33415f;
@@ -962,6 +962,18 @@ HTML = r"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 --acc:#3fe0c5;--acc2:rgba(63,224,197,.12);--ok:#3fe0c5;--okbg:rgba(63,224,197,.12);
 --warn:#ffb259;--warnbg:rgba(255,178,89,.13);--bad:#ff7a7a;--badbg:rgba(255,122,122,.13);
 --mono:'Roboto Mono',ui-monospace,"SF Mono",Menlo,monospace}
+:root[data-theme=light]{--bg:#f3f6fc;--bg2:#e9eef7;--card:#ffffff;--card2:#f8fafd;--bd:#dde4f0;--bd2:#c9d3e3;
+--tx:#3c4660;--hi:#101a2c;--mut:#74829a;--g1:#3a6cf0;--g2:#0fae93;
+--acc:#0b9a82;--acc2:rgba(15,174,147,.12);--ok:#0b9a82;--okbg:rgba(15,174,147,.12);
+--warn:#b9740f;--warnbg:rgba(214,142,30,.15);--bad:#d6453f;--badbg:rgba(214,69,63,.1)}
+:root[data-theme=light] body{background:radial-gradient(1100px 460px at 50% -260px,rgba(58,108,240,.08),transparent 70%),radial-gradient(900px 400px at 90% -200px,rgba(15,174,147,.06),transparent 70%),var(--bg)}
+:root[data-theme=light] header{background:rgba(255,255,255,.8)}
+:root[data-theme=light] .side{background:rgba(255,255,255,.62)}
+:root[data-theme=light] input,:root[data-theme=light] textarea{background:#fff;color:var(--hi)}
+:root[data-theme=light] select{background:#fff;color:var(--tx)}
+:root[data-theme=light] .logbox{background:#f1f4fa;color:#46546b}
+:root[data-theme=light] .card,:root[data-theme=light] .platbox,:root[data-theme=light] .lcard{box-shadow:0 8px 24px -18px rgba(20,40,80,.28)}
+:root[data-theme=light] table{box-shadow:0 8px 24px -20px rgba(20,40,80,.22)}
 *{box-sizing:border-box}html,body{margin:0}
 body{color:var(--tx);font-size:13.5px;
 font-family:'Inter',-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
@@ -976,6 +988,9 @@ header{background:rgba(15,22,35,.72);backdrop-filter:blur(10px);border-bottom:1p
 .tab:hover{color:var(--hi);background:rgba(255,255,255,.04)}
 .tab.on{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;font-weight:700;box-shadow:0 4px 16px -6px rgba(63,224,197,.5)}
 .clock{margin-left:auto;color:var(--mut);font-size:12px}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tbtn{width:26px;height:26px;border-radius:7px;border:1px solid var(--bd);background:transparent;color:var(--mut);font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.14s;opacity:.75;backdrop-filter:blur(4px);flex-shrink:0}
+.tbtn:hover{border-color:var(--g2);color:var(--acc);opacity:1;background:rgba(127,127,127,.08)}
 .wrap{max-width:1180px;margin:24px auto;padding:0 20px}
 .lbl{color:var(--mut);font-size:11px;letter-spacing:1.3px;font-weight:600;text-transform:uppercase;margin:0 0 12px;display:flex;align-items:center}
 .lbl:before{content:"";display:inline-block;width:16px;height:2px;border-radius:2px;margin-right:9px;background:linear-gradient(90deg,var(--g1),var(--g2))}
@@ -1035,8 +1050,8 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:flex;min-height:100vh}
 .side{width:210px;flex-shrink:0;background:rgba(15,22,35,.55);border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .sbrand{display:flex;align-items:center;gap:11px;margin-bottom:24px}
-.sbrand .bt{font-weight:800;font-size:15.5px;line-height:1.2;color:var(--hi)}
-.sbrand .bt small{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);font-weight:600;margin-top:4px;font-family:var(--mono)}
+.sbrand .bt{font-weight:600;font-size:16.5px;line-height:1.3;color:var(--hi);letter-spacing:.2em;font-feature-settings:"palt"}
+.sbrand .bt small{display:block;font-size:9px;letter-spacing:.34em;color:var(--mut);font-weight:500;margin-top:6px;font-family:var(--mono)}
 .pg{background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-style:normal}
 .orb{position:relative;border-radius:50%;flex-shrink:0;
 background:radial-gradient(circle at 37% 31%,#f2fffc 0%,#8ff3e6 17%,#3fe0c5 42%,#1aa6cf 71%,#083f57 100%);
@@ -1048,9 +1063,9 @@ background:radial-gradient(circle,rgba(255,255,255,.95),rgba(255,255,255,0) 70%)
 .nav{display:flex;flex-direction:column;gap:2px}
 .ni{padding:9px 13px;border-radius:9px;cursor:pointer;color:var(--mut);font-weight:600;font-size:13px;letter-spacing:.3px;transition:.14s}
 .ni:hover{color:var(--hi);background:rgba(255,255,255,.04)}
-.ni.on{background:linear-gradient(92deg,rgba(90,141,255,.2),rgba(63,224,197,.16));color:var(--hi);box-shadow:inset 2px 0 0 var(--g2)}
+.ni.on{background:linear-gradient(90deg,var(--acc2),transparent 86%);color:var(--acc);box-shadow:inset 2px 0 0 var(--g2);font-weight:700}
 .ni.sub{padding-left:24px;font-size:12.5px}
-.nigrp{margin:16px 0 5px;padding:0 13px;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);font-weight:700}
+.nigrp{margin:13px 0 5px;padding:13px 13px 0;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mut);font-weight:700;border-top:1px solid var(--bd)}
 .sfoot{margin-top:auto;color:var(--mut);font-size:11px;font-family:var(--mono);padding:12px 13px 0;border-top:1px solid var(--bd)}
 main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .inner{width:100%;max-width:1040px}
@@ -1058,6 +1073,19 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .suser{color:var(--tx);font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .suser .dot{width:7px;height:7px;border-radius:50%;background:var(--g2);box-shadow:0 0 8px var(--g2);flex-shrink:0}
 .lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px}
+.doc{max-width:880px}
+.doc h2{font-size:18px;margin:2px 0 6px;color:var(--hi)}
+.doc .sub2{color:var(--mut);font-size:12.5px;margin-bottom:16px;line-height:1.6}
+.doc .lcard{margin-bottom:14px}
+.doc h3{margin:0 0 10px;font-size:14.5px;color:var(--acc);display:flex;align-items:center}
+.doc p{margin:7px 0;line-height:1.75;color:var(--tx)}
+.doc ul,.doc ol{margin:7px 0;padding-left:19px;line-height:1.78}
+.doc li{margin:6px 0;color:var(--tx)}
+.doc b{color:var(--hi);font-weight:600}
+.doc .step{display:inline-flex;width:23px;height:23px;align-items:center;justify-content:center;border-radius:6px;background:var(--acc2);color:var(--acc);font-weight:700;font-family:var(--mono);margin-right:9px;font-size:12.5px}
+.doc .jump{color:var(--acc);cursor:pointer;border-bottom:1px dashed var(--acc)}
+.doc .jump:hover{filter:brightness(1.15)}
+.doc .tip{background:var(--warnbg);border:1px solid rgba(255,178,89,.3);color:var(--warn);border-radius:8px;padding:9px 12px;font-size:12.5px;margin:10px 0 2px;line-height:1.65}
 .lcard{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--bd);border-radius:13px;padding:16px 18px;box-shadow:0 14px 30px -24px rgba(0,0,0,.8)}
 .lcard h3{margin:0 0 12px;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);display:flex;align-items:center;gap:8px;font-weight:700}
 .linkitem{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--bd);border-radius:9px;margin-bottom:8px;color:var(--tx);text-decoration:none;transition:.14s}
@@ -1070,48 +1098,53 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 .logbox::-webkit-scrollbar{width:9px;height:9px}.logbox::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:6px}
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
+<script>try{if(localStorage.getItem('pearl_theme')!='dark')document.documentElement.setAttribute('data-theme','light');}catch(e){document.documentElement.setAttribute('data-theme','light');}</script>
 <div id=login style=display:none><div class=box>
 <div style="display:flex;align-items:center;gap:18px;margin-bottom:14px">
 <span class=orb style="width:42px;height:42px"></span>
-<div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0">今晚挖<i class=pg>珍珠</i></h2></div></div>
+<div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0;font-weight:600;letter-spacing:.2em">今晚挖<i class=pg>珍珠</i></h2></div></div>
 <div class=sub>PEARL SNIPER DASHBOARD</div>
 <input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
 <div class=err id=lerr></div>
 <button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button>
-<div class=peek onclick=guestLogin()>👁 偷窥模式 · 仅看总览 / PEEK MODE</div></div></div>
+<div class=peek onclick=guestLogin()>👁 偷窥模式 · 仅看仪表盘 / PEEK MODE</div></div></div>
 
 <div class=app>
 <aside class=side>
 <div class=sbrand><span class=orb style="width:26px;height:26px"></span><span class=bt>今晚挖<i class=pg>珍珠</i><small>PEARL SNIPER v1</small></span></div>
 <nav class=nav>
-<div class="ni on" data-nav=ov onclick="nav('ov')">总览</div>
-<div class="ni" data-nav=lk onclick="nav('lk')">工具链接</div>
-<div class="nigrp adm">配置</div>
-<div class="ni sub adm" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
+<div class="ni on" data-nav=ov onclick="nav('ov')">仪表盘</div>
+<div class="ni" data-nav=lk onclick="nav('lk')">工具集</div>
+<div class="nigrp adm">配置工作台</div>
+<div class="ni sub adm" data-nav=cf:common onclick="nav('cf:common')">全局配置</div>
 <div class="ni sub adm" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
 <div class="ni sub adm" data-nav=cf:runpod onclick="nav('cf:runpod')">RUNPOD</div>
 <div class="ni sub adm" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
 <div class="ni sub adm" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
+<div class="nigrp">文档</div>
+<div class="ni sub" data-nav=doc:guide onclick="nav('doc:guide')">工具说明</div>
+<div class="ni sub" data-nav=doc:tutorial onclick="nav('doc:tutorial')">挖珠教程</div>
 </nav>
-<div class=sfoot><div class=suser><span class=dot></span><span id=uname>admin</span></div><div id=clock></div>
+<div class=sfoot><div class=srow><div class=suser><span class=dot></span><span id=uname>admin</span></div><button class=tbtn id=tbtn onclick=toggleTheme() title="切换亮 / 暗">🌙</button></div><div id=clock></div>
 <div class=logout onclick=logout()>⏏ 退出登录</div></div>
 </aside>
-<main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=cf style=display:none></div></div></main>
+<main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=doc style=display:none></div><div id=cf style=display:none></div></div></main>
 </div>
 <div class=toast id=toast></div>
 
 <script>
-let view='ov',subtab='common',ROLE='admin';
+let view='ov',subtab='common',docsub='guide',ROLE='admin';
 function applyRole(){let adm=ROLE=='admin';
 document.querySelectorAll('.adm').forEach(e=>e.style.display=adm?'':'none');
 let u=document.getElementById('uname');if(u)u.textContent=adm?'admin':'访客 GUEST';
 let dot=document.querySelector('.suser .dot');if(dot)dot.style.background=adm?'var(--g2)':'var(--warn)';
 if(!adm&&view=='cf'){nav('ov');}}
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2600);}
-function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else{view='cf';subtab=t.split(':')[1];}
+function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else if(t.indexOf('doc:')==0){view='doc';docsub=t.split(':')[1];}else{view='cf';subtab=t.split(':')[1];}
 document.querySelectorAll('.ni').forEach(e=>e.classList.toggle('on',e.dataset.nav==t));
 document.getElementById('ov').style.display=view=='ov'?'':'none';
 document.getElementById('lk').style.display=view=='lk'?'':'none';
+document.getElementById('doc').style.display=view=='doc'?'':'none';
 document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
 function copyAddr(a){(navigator.clipboard?navigator.clipboard.writeText(a):Promise.reject()).then(()=>toast('钱包地址已复制')).catch(()=>toast('复制失败, 请手动选中'));}
 async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}document.getElementById('login').style.display='none';return r.json();}
@@ -1123,6 +1156,9 @@ async function guestLogin(){const r=await fetch('/login',{method:'POST',headers:
 if(r.ok){const d=await r.json();afterAuth(d.role||'guest');}}
 async function logout(){try{await fetch('/logout',{method:'POST'});}catch(e){}location.reload();}
 async function initRole(){try{const m=await fetch('/api/me');if(m.ok){const d=await m.json();ROLE=d.role;applyRole();}}catch(e){}}
+function applyTheme(t){let light=t=='light';document.documentElement.setAttribute('data-theme',light?'light':'dark');let b=document.getElementById('tbtn');if(b)b.textContent=light?'☀️':'🌙';let mc=document.querySelector('meta[name=theme-color]');if(mc)mc.setAttribute('content',light?'#f3f6fc':'#0a0e17');}
+function initTheme(){let t='light';try{t=localStorage.getItem('pearl_theme')||'light';}catch(e){}applyTheme(t);}
+function toggleTheme(){let cur=document.documentElement.getAttribute('data-theme')||'dark';let nx=cur=='light'?'dark':'light';try{localStorage.setItem('pearl_theme',nx);}catch(e){}applyTheme(nx);}
 function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
@@ -1175,7 +1211,7 @@ let cf=(k,label,req,ph)=>{let w='';
 if(diff[k]){let dv=Object.entries(diff[k]).map(([p,v])=>p+'='+(v==null||v===''?'∅':v)).join('   |   ');
 w=` <span class=cdiff title="${esc(dv)}">⚠ 各平台当前不一致, 保存将统一覆盖</span>`;}
 return `<div class=fld>${label}${req?' <span class=req>必填</span>':''}${w}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;};
-return `<div class=lbl>公共配置 · COMMON</div>
+return `<div class=lbl>全局配置 · COMMON</div>
 <div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
@@ -1185,7 +1221,7 @@ ${cf('image','矿机镜像 image',0,'docker.io/kuzigmgm/pearl-miner:v11')}
 ${cf('max_active_instances','最多同时租 (台)',0,'1')}
 ${cf('max_total_hourly_usd','总时租上限 ($/h)',0,'1.0')}
 ${cf('alert_url','告警 URL (可空)',0,'ntfy 等')}
-</div><div class=row style=margin-top:12px><button class=b-acc onclick=saveCommon()>保存公共配置</button>
+</div><div class=row style=margin-top:12px><button class=b-acc onclick=saveCommon()>保存全局配置</button>
 <span class=hint>保存后各平台需「重启应用」生效</span></div></div>
 <div class=platbox><div class=top><b>账户 · 看板登录</b></div>
 <div class=grid2>
@@ -1270,9 +1306,9 @@ if(clash.length){let detail=clash.map(k=>{
 let perp=Object.entries(diff[k]).map(([p,v])=>'    '+p+': '+(v==null||v===''?'(空)':v)).join('\n');
 let nv=(data[k]===''||data[k]==null)?'(空)':data[k];
 return '• '+k+'  → 4 平台统一为: '+nv+'\n'+perp;}).join('\n\n');
-if(!confirm('以下字段当前各平台不一致，保存公共配置会把 4 个平台覆盖成同一值:\n\n'+detail+'\n\n确定覆盖？')) return;}
+if(!confirm('以下字段当前各平台不一致，保存全局配置会把 4 个平台覆盖成同一值:\n\n'+detail+'\n\n确定覆盖？')) return;}
 let r=await api('/api/save-common',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:data})});
-toast(r.error?('失败: '+r.error):'公共配置已写入全部 config, 各平台点重启生效');}
+toast(r.error?('失败: '+r.error):'全局配置已写入全部 config, 各平台点重启生效');}
 async function saveRaw(p){let raw=document.getElementById('raw_'+p).value;
 let r=await api('/api/save-raw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,json:raw})});
 toast(r.error?('JSON 拒绝: '+r.error):p+' raw 已保存, 点重启生效');}
@@ -1290,6 +1326,7 @@ toast(r.error?('失败: '+r.error):'已执行 '+id);renderOverview();}
 const LINKS=[
 {t:'官网',i:'🌐',items:[['Pearl Research','https://pearlresearch.ai/']]},
 {t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
+{t:'交易平台',i:'💱',items:[['SafeTrade · PRL-USDT','https://safetrade.com/exchange/PRL-USDT'],['Pearl OTC','https://app.pearl-otc.com/'],['OKX Web3 · PRL','https://web3.okx.com/zh-hans/token/ethereum/0x07696dcab55e62cfef953666b29fe1970518cb00']]},
 {t:'钱包',i:'👛',items:[['Compute Wallet','https://compute.pearlresearch.ai/wallet']]},
 {t:'矿池',i:'⛏️',items:[['PearlHash','http://pearlhash.xyz'],['AlphaPool','https://pearl.alphapool.tech/']]},
 {t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://runpod.io?ref=9hx2ahkb'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
@@ -1298,10 +1335,98 @@ const LINKS=[
 function dom(u){try{return new URL(u).host}catch(e){return u}}
 function renderLinks(){let cards=LINKS.map(c=>`<div class=lcard><h3>${c.i} ${esc(c.t)}</h3>`+
 c.items.map(it=>`<a class=linkitem href="${esc(it[1])}" target=_blank rel=noopener><span class=nm>${esc(it[0])}</span><span class=d>${esc(dom(it[1]))} ↗</span></a>`).join('')+`</div>`).join('');
-document.getElementById('lk').innerHTML=`<div class=lbl>工具链接 · TOOLS</div><div class=lgrid>${cards}</div>`;}
-function refresh(){if(view=='ov')renderOverview();else if(view=='lk')renderLinks();else renderConfigTab();}
+document.getElementById('lk').innerHTML=`<div class=lbl>工具集 · TOOLS</div><div class=lgrid>${cards}</div>`;}
+function docGuide(){return `<div class=doc>
+<div class=lbl>工具说明 · GUIDE</div>
+<h2>这是什么</h2>
+<div class=sub2>一句话:一个"自动租 GPU 挖珍珠(PRL)"的调度面板 —— 在 4 个云租卡平台(Salad / Vast / RunPod / TensorDock)上自动找便宜显卡、起矿机挖 PRL,自动淘汰算力差的坏机,把"产出 &gt; 租金"的差价变成你的利润。</div>
+<div class=tip>📌 重要:这是一套<b>需要你自己部署运行的开源工具</b>,不是托管网站。你要把这份代码跑在<b>自己的电脑或一台云服务器</b>上,才能看到这个面板。下面先讲怎么把它跑起来。</div>
+<div class=lcard><h3>💻 本地部署:怎么把它跑起来</h3>
+<p><b>环境:</b>只需 <b>Python 3.10+</b>(纯标准库,无需 pip / docker / 数据库)。跑面板的这台机器<b>不需要显卡</b> —— 它只是"指挥部",真正挖矿的是你在各平台租的远程 GPU。</p>
+<p><b>四步起跑:</b></p>
+<ol>
+<li>拿到本项目代码(git clone 或下载解压)。</li>
+<li><b>cp .env.example .env</b> —— 在 <b>.env</b> 里填各平台 API Key,并改掉 <b>DASHBOARD_PASSWORD</b>(默认 123456 务必改)。</li>
+<li>把 <b>config.*.json</b> 里的 <b>prl_address</b> 改成你自己的钱包地址。</li>
+<li>一条命令起全部:<b>bash scripts/start-all.sh</b>(Windows:<b>start-all.ps1</b>);停全部:<b>stop-all.sh</b>。</li>
+</ol>
+<p>起好后浏览器打开 <b>http://&lt;这台机器的IP&gt;:8787</b>,用 <b>admin / 你设的密码</b> 登录,就是当前这个面板。</p>
+<p><b>跑在哪?两种选择:</b></p>
+<ul>
+<li><b>自己电脑</b> —— 适合先试玩;地址用 http://localhost:8787。<b>关机/断网就停了。</b></li>
+<li><b>云服务器 / VPS</b>(推荐长期跑)—— 24h 不间断、随时随地公网访问。但端口暴露在公网,<b>务必改掉默认密码</b>,否则别人能填 key、启停你的租机。</li>
+</ul></div>
+<div class=lcard><h3>⚙️ 原理:它到底怎么挖(docker 拉取)</h3>
+<p>你<b>不用</b>手动登录每台租来的机器装环境。流程全自动:</p>
+<ol>
+<li>sniper 调用各平台 API <b>租到一块 GPU</b>。</li>
+<li>下单时把一个 <b>docker 矿机镜像</b>(默认 <b>pearl-miner:v11</b>)+ 一组<b>环境变量</b>(你的钱包 PRL_ADDRESS、矿池 PRL_HOST、worker 名等)一起下发给平台。</li>
+<li>平台自动 <b>docker pull 拉取镜像</b> → 在租来的 GPU 上跑起容器 → 容器里的矿机<b>连上 PearlHash 矿池开始挖 PRL</b>,收益直接进你的钱包地址。</li>
+<li>镜像内矿机会自报算力;面板通过矿池 API <b>盯着每台</b>,算力低于门槛(坏卡 / 老驱动 / 虚标)就让它停、再换一台。</li>
+</ol>
+<p>所以全程是:<b>租卡 → 自动拉 docker 镜像 → 自动连池挖矿 → 自动盯算力换坏机</b>,你只负责配好参数。</p></div>
+<div class=lcard><h3>💰 怎么赚钱(玩法)</h3>
+<p>你按小时花钱租云 GPU,GPU 挖出的 PRL 进你的钱包。只要 <b>PRL 产出 × 币价 &gt; GPU 租金</b>,就是净赚。本工具的核心就是把这个差价做正、做大:</p>
+<ul>
+<li><b>挑便宜卡</b> —— 自动比较各平台 offer,优先单位算力最便宜的。</li>
+<li><b>剔坏机</b> —— 持续盯每台实测算力,虚标 / 掉算力 / 驱动不行的自动关掉换机,不让钱白烧。</li>
+<li><b>控预算</b> —— 设了总时租上限和最大在跑数,绝不超支。</li>
+</ul></div>
+<div class=lcard><h3>🧭 面板各区</h3>
+<ul>
+<li><b>仪表盘</b> —— 钱包地址、在跑机器数、总算力(矿池实测)、累计租金、累计产出(PRL+折合USD)、累计折合利润;可改币价、重置统计、按平台暂停租用 / 关闭单台。</li>
+<li><b>工具集</b> —— 官网 / 浏览器 / 钱包 / 矿池 / 租卡平台 / 交易平台 / 计算器 的快捷入口。<span class=jump onclick="nav('lk')">→ 打开</span></li>
+<li><b>文档</b> —— 本说明 + 挖珠教程。<span class=jump onclick="nav('doc:tutorial')">→ 挖珠教程</span></li>
+<li><b>配置工作台</b>(仅管理员)—— 全局配置 + 各平台配置,见下。</li>
+</ul></div>
+<div class=lcard><h3>🔧 关键参数(配置工作台)</h3>
+<ul>
+<li><b>钱包地址 prl_address</b> —— 收益打到这,<b>务必是你自己的钱包</b>,填错就是给别人挖。</li>
+<li><b>总时租上限 max_total_hourly_usd</b> —— 所有平台合计每小时最多花多少,防超支。</li>
+<li><b>最大在跑数 max_active_instances</b> —— 同时最多开几台。</li>
+<li><b>矿机镜像 image / 矿池地址 prl_host</b> —— 一般用默认值即可。</li>
+<li><b>各平台:API Key、出价上限、可靠性、GPU 档筛选、健康算力门槛</b> —— 控制只租"够便宜 + 够稳"的卡。</li>
+</ul></div>
+<div class=tip>🔐 安全:API Key、钱包私钥 / 助记词只存在你部署的那台机器的本地文件(.env / 配置),不进代码仓库;公网部署务必改默认密码,转账、配置前再次确认钱包地址是你自己的。</div>
+</div>`;}
+function docTutorial(){return `<div class=doc>
+<div class=lbl>挖珠教程 · TUTORIAL</div>
+<h2>小白四步上手</h2>
+<div class=sub2>第一次玩?按 a → b → c → d 走一遍就能跑起来。</div>
+<div class=lcard><h3><span class=step>a</span>注册钱包,拿到钱包地址</h3>
+<ul>
+<li>打开 <span class=jump onclick="nav('lk')">工具集</span> → <b>钱包 · Compute Wallet</b>(compute.pearlresearch.ai/wallet)。</li>
+<li>创建或导入钱包,<b>务必备份助记词 / 私钥</b> —— 丢了谁也找不回。</li>
+<li>复制你的钱包地址(<b>prl1…</b> 开头),这是收益归属地址,第 c 步要填进配置。</li>
+</ul></div>
+<div class=lcard><h3><span class=step>b</span>去租卡平台租机器、充值、拿 API Key</h3>
+<ul>
+<li>打开 <span class=jump onclick="nav('lk')">工具集</span> → <b>租卡平台</b>,选一个或多个(Salad / Vast / RunPod / TensorDock)。</li>
+<li>注册账号 → <b>充值余额</b>(没余额起不了机)。</li>
+<li>在平台后台找到 <b>API Key / Token</b>,复制备用。</li>
+</ul>
+<div class=tip>💡 新手建议:先从 1 个平台、小预算试跑,跑通了再加平台、加预算。</div></div>
+<div class=lcard><h3><span class=step>c</span>配置参数,启动 miner</h3>
+<ul>
+<li>回到本面板 → <b>全局配置</b>(需管理员登录):填第 a 步的<b>钱包地址</b>;设<b>总时租上限</b>、<b>最大在跑数</b>控制预算;确认矿机镜像、矿池地址。</li>
+<li>到 <b>各平台配置</b> 填对应 <b>API Key</b>、出价上限、GPU 档筛选。</li>
+<li>各平台点 <b>重启</b> 生效。之后 sniper 自动租卡、起矿机挖 PRL,<b>仪表盘</b>开始出算力和累计产出。</li>
+<li>每个参数啥意思?见 <span class=jump onclick="nav('doc:guide')">工具说明</span>。</li>
+</ul></div>
+<div class=lcard><h3><span class=step>d</span>卖币获利(以 SafeTrade 为例)</h3>
+<ul>
+<li>挖到的 PRL 进你的 Compute Wallet,等"累计产出"成熟为已确认余额。</li>
+<li>打开 <span class=jump onclick="nav('lk')">工具集</span> → <b>交易平台 · SafeTrade</b>,注册并拿到 SafeTrade 的 <b>PRL 充值地址</b>。</li>
+<li>打开 <b>Compute Wallet</b>,发起转账:把 PRL 从你的钱包转到 SafeTrade 的充值地址。</li>
+<li>到账后在 SafeTrade <b>卖出 PRL → USDT</b>(挂单或市价)。</li>
+<li>算总账:<b>USDT 收入 − 累计租金 = 真实利润</b>(对应仪表盘"累计折合利润")。</li>
+</ul>
+<div class=tip>⚠️ 转账先用<b>小额测试</b>地址是否正确;留意交易所充提币规则与手续费。</div></div>
+</div>`;}
+function renderDocs(){document.getElementById('doc').innerHTML = docsub=='tutorial'?docTutorial():docGuide();}
+function refresh(){if(view=='ov')renderOverview();else if(view=='lk')renderLinks();else if(view=='doc')renderDocs();else renderConfigTab();}
 setInterval(()=>{let c=document.getElementById('clock');if(c)c.textContent=new Date().toLocaleTimeString();},1000);
-setInterval(()=>{if(view=='ov')renderOverview();},10000);initRole();refresh();
+setInterval(()=>{if(view=='ov')renderOverview();},10000);initTheme();initRole();refresh();
 </script></body></html>"""
 
 
