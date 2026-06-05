@@ -15,6 +15,7 @@ import datetime as dt
 import urllib.request
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -39,9 +40,11 @@ SPECIFIC = {
                    ("ram_gb", "num"), ("seen_ttl_seconds", "num")],
     "salad": [("organization_name", "str"), ("project_name", "str"), ("include_container_groups", "list"),
               ("low_efficiency_stop_seconds", "num"), ("reallocate_cooldown_seconds", "num"),
-              ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool")],
+              ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool"),
+              ("balance_usd", "num")],
 }
 HAS_CREATE = {"runpod", "tensordock"}
+NO_BALANCE_API = {"salad", "tensordock"}  # 无余额查询 API → 余额可在看板手填(总览内联编辑)
 
 def platform_of(account_id):
     """salad-2 → salad ; salad → salad"""
@@ -104,7 +107,7 @@ def load_conf():
 CONF = load_conf()
 SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
-POOL_TTL = 30.0
+POOL_STALE_MAX = 90.0  # serve-stale: 后台刷新; 超此值才在请求线程兜底重拉
 _lock = threading.Lock()
 
 
@@ -209,9 +212,9 @@ def pid_for(plat):
 def rent_paused(plat):
     return (CONTROL_DIR / f"{plat}.rent-paused").exists()
 
-def pool_data():
+def pool_data(force=False):
     now = time.time()
-    if _pool["data"] is not None and now - _pool["ts"] < POOL_TTL:
+    if _pool["data"] is not None and not force and (now - _pool["ts"] < POOL_STALE_MAX):
         return _pool["data"]
     addr = prl_address()
     data = {}
@@ -231,7 +234,9 @@ def pool_data():
 
 # ---------- Salad 实时 ----------
 _salad = {}  # account_id -> {"data", "ts"}
-SALAD_TTL = 30.0
+SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超此值(后台异常)才在请求线程同步兜底重算
+SALAD_WORKERS = 8        # 每账号容器组并发拉取的线程数
+REFRESH_INTERVAL = 30.0  # 后台刷新所有缓存(salad/余额/矿池)的周期(秒); 循环为 refresh→sleep, 轮次不重叠
 
 def salad_get(url, key):
     req = urllib.request.Request(url, headers={"Salad-Api-Key": key, "User-Agent": "sniper-dashboard/1.0"})
@@ -290,11 +295,19 @@ def salad_gpu_prices(base, org, key):
     _gpucls[org] = {"data": out, "ts": now}
     return out
 
-def salad_live(account_id="salad"):
+def salad_live(account_id="salad", force=False):
+    """读 salad 缓存(serve-stale, 永不在请求线程阻塞); 后台线程每 REFRESH_INTERVAL 强制刷新。
+    仅冷启动(无缓存)或后台异常致缓存超 SALAD_STALE_MAX 兜底时才同步重算。"""
     now = time.time()
     slot = _salad.get(account_id)
-    if slot and now - slot["ts"] < SALAD_TTL:
+    if slot and not force and (now - slot["ts"] < SALAD_STALE_MAX):
         return slot["data"]
+    data = _salad_compute(account_id)
+    _salad[account_id] = {"data": data, "ts": now}
+    return data
+
+def _salad_compute(account_id):
+    """实际拉取 salad 数据: 各容器组的 /{组} + /{组}/instances 用线程池并发(原为串行, 组多时很慢)。"""
     res = {"instances": [], "counts": {}, "error": None, "price_label": None, "gpu_classes": []}
     plat = platform_of(account_id)
     scfg = read_config(account_id).get(plat, {})
@@ -303,7 +316,6 @@ def salad_live(account_id="salad"):
     org, proj = scfg.get("organization_name"), scfg.get("project_name")
     if not (key and org and proj and scfg.get("enabled")):
         res["error"] = "salad 未启用/未配置 key"
-        _salad[account_id] = {"data": res, "ts": now}
         return res
     base = str(scfg.get("base_url", "https://api.salad.com/api/public")).rstrip("/")
     pre = f"{base}/organizations/{org}/projects/{proj}/containers"
@@ -335,25 +347,25 @@ def salad_live(account_id="salad"):
         def phr(w):
             gi = (w or {}).get("gpu_info") or []
             return round(sum(hashrate_th(g.get("hashrate")) for g in gi), 2) if gi else None
-        prices = []
-        for nm in names:
+        def fetch_group(nm):  # 单组: 拉 组详情 + 实例; 返回片段, 由主线程按 names 顺序合并
+            out = {"name": nm, "counts": None, "gpu_classes": [], "prices": [], "instances": [], "error": None}
             prio = "medium"
             label = None
             try:
                 g = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}", key)
-                res["counts"][nm] = (g.get("current_state") or {}).get("instance_status_counts") or {}
+                out["counts"] = (g.get("current_state") or {}).get("instance_status_counts") or {}
                 prio = g.get("priority") or "medium"
                 cls = ((g.get("container") or {}).get("resources") or {}).get("gpu_classes") or []
                 for c in cls:
                     cname = gp.get(c, {}).get("name")
-                    if cname and cname not in res["gpu_classes"]:
-                        res["gpu_classes"].append(cname)
+                    if cname:
+                        out["gpu_classes"].append(cname)
                 ps = [float(gp.get(c, {}).get("prices", {}).get(prio)) for c in cls
                       if gp.get(c, {}).get("prices", {}).get(prio) is not None]
                 if ps:
                     lo, hi = min(ps), max(ps)
                     label = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
-                    prices += ps
+                    out["prices"] += ps
             except Exception:
                 pass
             # 按组优先级建 GPU名→精确价 映射; 命中用单价, 否则兜底表, 再否则回退区间 label
@@ -376,7 +388,7 @@ def salad_live(account_id="salad"):
                 d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
                 insts = d.get("instances") or []
             except Exception as ie:
-                res["error"] = f"instances: {type(ie).__name__}: {ie}"
+                out["error"] = f"instances: {type(ie).__name__}: {ie}"
             for inst in insts:
                 iid = str(inst.get("instance_id") or inst.get("id") or "")
                 mid = str(inst.get("machine_id") or "")
@@ -386,7 +398,7 @@ def salad_live(account_id="salad"):
                 hr = w.get("last_hashrate_th")
                 if hr is None:
                     hr = phr(pw)
-                res["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
+                out["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
                                          "price": inst_price_num(gpu),
@@ -399,16 +411,32 @@ def salad_live(account_id="salad"):
                     mm = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", wn)
                     mid = mm.group(0) if mm else wn
                     igpu = pgpu(w) or "?"
-                    res["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
+                    out["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
                                              "group": nm, "state": "running", "started_epoch": None,
                                              "price": inst_price_num(igpu),
                                              "price_label": inst_price(igpu), "hashrate_th": phr(w)})
+            return out
+        if names:
+            with ThreadPoolExecutor(max_workers=min(SALAD_WORKERS, len(names))) as ex:
+                group_results = list(ex.map(fetch_group, names))  # map 保序 → 合并顺序同原串行
+        else:
+            group_results = []
+        prices = []
+        for gr in group_results:
+            if gr["counts"] is not None:
+                res["counts"][gr["name"]] = gr["counts"]
+            for cn in gr["gpu_classes"]:
+                if cn not in res["gpu_classes"]:
+                    res["gpu_classes"].append(cn)
+            res["instances"].extend(gr["instances"])
+            prices += gr["prices"]
+            if gr["error"] and not res["error"]:
+                res["error"] = gr["error"]
         if prices:
             lo, hi = min(prices), max(prices)
             res["price_label"] = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
     except Exception as e:
         res["error"] = f"{type(e).__name__}: {e}"
-    _salad[account_id] = {"data": res, "ts": now}
     return res
 
 def _http_json(method, url, headers, body=None):
@@ -419,13 +447,21 @@ def _http_json(method, url, headers, body=None):
         return json.loads(r.read().decode("utf-8"))
 
 _bal = {}  # plat -> (value|None, ts)
-BAL_TTL = 60.0
+BAL_STALE_MAX = 300.0  # serve-stale: 后台刷新余额; 超此值才在请求线程兜底重拉(余额变动慢, 上限放宽)
 
-def platform_balance(account_id):
-    """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None。"""
+def estimate_manual_balance(balance_usd, asof_epoch, burn_hourly, now):
+    """从手填余额按 burn rate 自动递减的估算当前余额(USD, 不为负)。
+    Salad/TensorDock 无余额 API: 用户在 config 填一次 balance_usd(+自动记录 balance_asof),
+    看板据当前消耗速率估算 now 时刻余额。不知道充值/精确计费, 会逐渐偏差, 需偶尔回填校准。"""
+    elapsed_h = max(0.0, (now - asof_epoch) / 3600.0)
+    return round(max(0.0, float(balance_usd) - float(burn_hourly) * elapsed_h), 2)
+
+def platform_balance(account_id, force=False):
+    """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None(可手填估算)。
+    serve-stale: 请求线程读缓存不阻塞, 后台 force 刷新。"""
     now = time.time()
     c = _bal.get(account_id)
-    if c and now - c[1] < BAL_TTL:
+    if c and not force and (now - c[1] < BAL_STALE_MAX):
         return c[0]
     val = None
     plat = platform_of(account_id)
@@ -503,6 +539,26 @@ def spend_loop():
         time.sleep(60)
 
 
+def _refresh_once():
+    """后台预热所有缓存一轮: 矿池 + 各账号 salad 实时 + 余额。让 HTTP 请求只读缓存、永不阻塞。"""
+    pool_data(force=True)
+    for acct in list_accounts():
+        try:
+            if platform_of(acct) == "salad":
+                salad_live(acct, force=True)
+            platform_balance(acct, force=True)
+        except Exception:
+            pass
+
+def _refresh_loop():
+    while True:
+        try:
+            _refresh_once()
+        except Exception:
+            pass
+        time.sleep(REFRESH_INTERVAL)
+
+
 # ---------- 总览数据 ----------
 def build_summary():
     pool = pool_data()
@@ -564,7 +620,18 @@ def build_rentals():
         }
         bal = platform_balance(acct)
         burn = sum(float(m.get("price") or 0) for m in items)
+        estimated = False
+        if bal is None and cfg.get("balance_usd") is not None:  # 无 API 余额时用手填值按消耗估算
+            try:
+                asof = iso_to_epoch(cfg.get("balance_asof")) or now
+                bal = estimate_manual_balance(cfg.get("balance_usd"), asof, burn, now)
+                estimated = True
+            except Exception:
+                bal = None
         res[acct]["balance"] = bal
+        res[acct]["balance_estimated"] = estimated
+        res[acct]["balance_editable"] = plat in NO_BALANCE_API  # 无 API 的平台允许总览内联手填
+        res[acct]["balance_usd"] = cfg.get("balance_usd")        # 原始手填值, 供编辑框预填
         res[acct]["burn_hourly"] = round(burn, 4)
         res[acct]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
         if plat == "salad":
@@ -656,6 +723,14 @@ def save_platform_cfg(acct, patch):
     p = cfg_path(acct)
     cfg = read_json(p, {})
     sub = cfg.get(plat, {}) or {}
+    if "balance_usd" in patch:  # 手填余额变化时自动记录时间, 供看板按消耗递减估算
+        try:
+            old = sub.get("balance_usd")
+            if patch["balance_usd"] is not None and (old is None or float(old) != float(patch["balance_usd"])):
+                patch = dict(patch)
+                patch["balance_asof"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        except Exception:
+            pass
     sub.update(patch)
     cfg[plat] = sub
     backup_and_write(p, cfg)
@@ -929,6 +1004,20 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 .platbox .top{display:flex;align-items:center;gap:9px;margin-bottom:12px}
 .platbox .top b{font-size:14px;font-weight:700;letter-spacing:.8px;color:var(--hi)}
 .bal{margin-left:auto;color:var(--mut);font-size:12px;white-space:nowrap;font-family:var(--mono)}
+.bal.editable{cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;border:1px solid transparent;transition:.15s}
+.bal.editable:hover{color:var(--hi);background:var(--acc2);border-color:rgba(63,224,197,.32)}
+.ed-pen{font-size:10.5px;opacity:.45;transition:.15s}
+.bal.editable:hover .ed-pen{opacity:1;color:var(--acc)}
+.bal-edit{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono)}
+.bal-edit .cur{color:var(--mut);font-size:13px}
+.bal-edit input{width:84px;background:var(--bg);border:1px solid var(--bd2);border-radius:8px;color:var(--hi);font-family:var(--mono);font-size:13px;padding:6px 9px;outline:none;text-align:right;-moz-appearance:textfield}
+.bal-edit input::-webkit-outer-spin-button,.bal-edit input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.bal-edit input:focus{border-color:var(--acc);box-shadow:0 0 0 2px rgba(63,224,197,.16)}
+.bal-edit .bb{border:1px solid var(--bd);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:.14s;background:var(--card)}
+.bal-edit .bb.ok{background:var(--acc2);color:var(--acc);border-color:rgba(63,224,197,.42)}
+.bal-edit .bb.ok:hover{background:rgba(63,224,197,.24)}
+.bal-edit .bb.x{color:var(--mut)}
+.bal-edit .bb.x:hover{color:var(--hi);background:rgba(255,255,255,.07)}
 .req{color:var(--bad);font-size:10px;border:1px solid rgba(255,122,122,.4);background:var(--badbg);border-radius:5px;padding:1px 6px;letter-spacing:.5px}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
 button:hover{border-color:var(--g2);color:var(--hi);background:rgba(63,224,197,.06)}
@@ -1010,6 +1099,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 
 <script>
 let view='ov',subtab='common';
+let EDITING=null,BALVAL={};   // 总览余额内联编辑: 正在编辑的账号 / 各账号手填余额预填值
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2600);}
 function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else{view='cf';subtab=t.split(':')[1];}
 document.querySelectorAll('.ni').forEach(e=>e.classList.toggle('on',e.dataset.nav==t));
@@ -1025,14 +1115,15 @@ function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
 
-async function renderOverview(){let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
+async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const aid of Object.keys(r)){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
-let bh;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');bh=`<span class=bal>余额 $${fnum(v.balance,2)}${t?' · '+t:''}</span>`;}else{bh='<span class=bal>余额 —</span>';}
+let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
+let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
 let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
@@ -1168,6 +1259,10 @@ async function term(aid,plat,id,group){let label=plat=='salad'?'迁移(reallocat
 if(!confirm('确定要'+label+'这台机器吗?\n'+aid+' · '+id))return;
 let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,id:id,group:group})});
 toast(r.error?('失败: '+r.error):'已执行 '+id);renderOverview();}
+function editBal(aid){EDITING=aid;const el=document.getElementById('bal_'+aid);if(!el)return;el.classList.remove('editable');el.removeAttribute('onclick');el.removeAttribute('title');const cur=(BALVAL[aid]!=null?BALVAL[aid]:'');el.innerHTML=`<span class=bal-edit><span class=cur>$</span><input id="bali_${esc(aid)}" type=number step=0.01 min=0 value="${cur}" placeholder="0.00" onkeydown="balKey(event,'${esc(aid)}')"><button class="bb ok" title=保存 onclick="saveBal('${esc(aid)}')">✓</button><button class="bb x" title=取消 onclick="cancelBal()">✕</button></span>`;const inp=document.getElementById('bali_'+aid);inp.focus();inp.select();}
+function balKey(e,aid){if(e.key=='Enter'){e.preventDefault();saveBal(aid);}else if(e.key=='Escape'){e.preventDefault();cancelBal();}}
+function cancelBal(){EDITING=null;renderOverview();}
+async function saveBal(aid){const inp=document.getElementById('bali_'+aid);if(!inp){EDITING=null;return;}const s=inp.value.trim();let bu=(s===''?null:parseFloat(s));if(s!==''&&!(bu>=0)){toast('请输入有效金额(≥0)');inp.focus();return;}EDITING=null;let r;try{r=await api('/api/save-platform',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,data:{balance_usd:bu}})});}catch(e){toast('保存失败');renderOverview();return;}toast(r&&r.ok?'余额已更新':('失败: '+((r&&r.error)||'未知')));renderOverview();}
 const LINKS=[
 {t:'官网',i:'🌐',items:[['Pearl Research','https://pearlresearch.ai/']]},
 {t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
@@ -1189,6 +1284,7 @@ setInterval(()=>{if(view=='ov')renderOverview();},10000);refresh();
 def main():
     CONTROL_DIR.mkdir(exist_ok=True)
     threading.Thread(target=spend_loop, daemon=True).start()
+    threading.Thread(target=_refresh_loop, daemon=True).start()  # 后台预热缓存, 请求只读缓存不阻塞
     port = int(CONF.get("port", 8787))
     srv = ThreadingHTTPServer(("0.0.0.0", port), H)
     print(f"pearl dashboard on http://0.0.0.0:{port}  (user={CONF.get('user','admin')})", flush=True)
