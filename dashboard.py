@@ -15,6 +15,7 @@ import datetime as dt
 import urllib.request
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -42,9 +43,41 @@ SPECIFIC = {
               ("treat_missing_log_as_zero", "bool"), ("low_efficiency_stop_seconds", "num"),
               ("reallocate_cooldown_seconds", "num"), ("hashrate_watch_interval_seconds", "num"),
               ("log_lookback_seconds", "num"), ("missing_worker_as_zero", "bool"),
-              ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool")],
+              ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool"),
+              ("balance_usd", "num")],
 }
 HAS_CREATE = {"runpod", "tensordock"}
+NO_BALANCE_API = {"salad", "tensordock"}  # 无余额查询 API → 余额可在看板手填(总览内联编辑)
+
+def platform_of(account_id):
+    """salad-2 → salad ; salad → salad"""
+    return re.sub(r"-\d+$", "", account_id)
+
+def list_accounts():
+    """扫描 configs/config.<X>.json(排除 *.example.json), 返回 account_id 列表, 账号1(无后缀)在前。"""
+    out = []
+    for p in sorted(ROOT.glob("configs/config.*.json")):
+        name = p.name
+        if name.endswith(".example.json"):
+            continue
+        out.append(name[len("config."):-len(".json")])
+    return sorted(out, key=lambda a: (platform_of(a), a))
+
+def account_label(account_id):
+    """卡片/侧栏标签: 平台-标识(标识 = 自定义 account_label / salad 的 org / 账号序号)。"""
+    plat = platform_of(account_id)
+    cfg = read_config(account_id)
+    custom = cfg.get("account_label")
+    org = (cfg.get(plat, {}) or {}).get("organization_name")
+    m = re.search(r"-(\d+)$", account_id)
+    n = m.group(1) if m else "1"
+    ident = custom or org or f"账号{n}"
+    return f"{plat}-{ident}"
+
+def key_var_for(account_id):
+    """该账号 API key 的 .env 变量名: config.api_key_env 优先, 否则平台标准名。"""
+    plat = platform_of(account_id)
+    return read_config(account_id).get("api_key_env") or KEYNAME.get(plat, "")
 
 def env_quote(v):
     """单引号包裹值, 内部 ' 转义为 '\\''; 让 .env 被 shell source 时安全、防注入。"""
@@ -77,7 +110,7 @@ def load_conf():
 CONF = load_conf()
 SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
-POOL_TTL = 30.0
+POOL_STALE_MAX = 90.0  # serve-stale: 后台刷新; 超此值才在请求线程兜底重拉
 _lock = threading.Lock()
 # pearl 折算币价(USD/coin); 可用环境变量 COIN_PRICE_USD 覆盖, 默认 0.75。
 COIN_PRICE_USD = float(os.environ.get("COIN_PRICE_USD") or 0.75)
@@ -94,7 +127,11 @@ def cfg_path(plat):
     return ROOT / f"configs/config.{plat}.json"
 
 def prl_address():
-    return read_json(cfg_path("vast"), {}).get("prl_address", "")
+    for a in list_accounts():
+        w = read_config(a).get("prl_address")
+        if w:
+            return w
+    return ""
 
 def read_state(plat):
     return read_json(ROOT / f"state.{plat}.json", {})
@@ -180,9 +217,9 @@ def pid_for(plat):
 def rent_paused(plat):
     return (CONTROL_DIR / f"{plat}.rent-paused").exists()
 
-def pool_data():
+def pool_data(force=False):
     now = time.time()
-    if _pool["data"] is not None and now - _pool["ts"] < POOL_TTL:
+    if _pool["data"] is not None and not force and (now - _pool["ts"] < POOL_STALE_MAX):
         return _pool["data"]
     addr = prl_address()
     data = {}
@@ -201,8 +238,10 @@ def pool_data():
 
 
 # ---------- Salad 实时 ----------
-_salad = {"data": None, "ts": 0.0}
-SALAD_TTL = 30.0
+_salad = {}  # account_id -> {"data", "ts"}
+SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超此值(后台异常)才在请求线程同步兜底重算
+SALAD_WORKERS = 8        # 每账号容器组并发拉取的线程数
+REFRESH_INTERVAL = 30.0  # 后台刷新所有缓存(salad/余额/矿池)的周期(秒); 循环为 refresh→sleep, 轮次不重叠
 
 def salad_get(url, key):
     req = urllib.request.Request(url, headers={"Salad-Api-Key": key, "User-Agent": "sniper-dashboard/1.0"})
@@ -243,13 +282,14 @@ SALAD_GPU_PRICES = {
     "rtx a5000":         {"low": 0.143, "medium": 0.197, "high": 0.25},
 }
 
-_gpucls = {"data": None, "ts": 0.0}
+_gpucls = {}  # org -> {"data", "ts"}
 
 def salad_gpu_prices(base, org, key):
-    """{uuid: {name, prices:{priority:price}}} ，缓存 10min。"""
+    """{uuid: {name, prices:{priority:price}}} ，缓存 10min(按 org)。"""
     now = time.time()
-    if _gpucls["data"] is not None and now - _gpucls["ts"] < 600:
-        return _gpucls["data"]
+    slot = _gpucls.get(org)
+    if slot and now - slot["ts"] < 600:
+        return slot["data"]
     out = {}
     try:
         d = salad_get(f"{base}/organizations/{org}/gpu-classes", key)
@@ -258,20 +298,30 @@ def salad_gpu_prices(base, org, key):
             out[g.get("id")] = {"name": g.get("name"), "prices": pr}
     except Exception:
         pass
-    _gpucls.update(data=out, ts=now)
+    _gpucls[org] = {"data": out, "ts": now}
     return out
 
-def salad_live():
+def salad_live(account_id="salad", force=False):
+    """读 salad 缓存(serve-stale, 永不在请求线程阻塞); 后台线程每 REFRESH_INTERVAL 强制刷新。
+    仅冷启动(无缓存)或后台异常致缓存超 SALAD_STALE_MAX 兜底时才同步重算。"""
     now = time.time()
-    if _salad["data"] is not None and now - _salad["ts"] < SALAD_TTL:
-        return _salad["data"]
+    slot = _salad.get(account_id)
+    if slot and not force and (now - slot["ts"] < SALAD_STALE_MAX):
+        return slot["data"]
+    data = _salad_compute(account_id)
+    _salad[account_id] = {"data": data, "ts": now}
+    return data
+
+def _salad_compute(account_id):
+    """实际拉取 salad 数据: 各容器组的 /{组} + /{组}/instances 用线程池并发(原为串行, 组多时很慢)。"""
     res = {"instances": [], "counts": {}, "error": None, "price_label": None, "gpu_classes": []}
-    scfg = read_config("salad").get("salad", {})
-    key = read_env().get("SALAD_API_KEY") or os.environ.get("SALAD_API_KEY", "")
+    plat = platform_of(account_id)
+    scfg = read_config(account_id).get(plat, {})
+    kv = key_var_for(account_id)
+    key = read_env().get(kv) or os.environ.get(kv, "")
     org, proj = scfg.get("organization_name"), scfg.get("project_name")
     if not (key and org and proj and scfg.get("enabled")):
         res["error"] = "salad 未启用/未配置 key"
-        _salad.update(data=res, ts=now)
         return res
     base = str(scfg.get("base_url", "https://api.salad.com/api/public")).rstrip("/")
     pre = f"{base}/organizations/{org}/projects/{proj}/containers"
@@ -281,7 +331,7 @@ def salad_live():
         if not names:
             d = salad_get(pre, key)
             names = [g.get("name") for g in (d.get("items") or [])]
-        watch = read_state("salad").get("salad_instance_watch") or {}
+        watch = read_state(account_id).get("salad_instance_watch") or {}
         # 矿池侧: salad worker 名 = <prefix>-salad-<machine_id>, gpu_info 带真实卡型
         pool = pool_data()
         pool_workers = (pool.get("connected_workers") or []) if isinstance(pool, dict) else []
@@ -292,31 +342,36 @@ def salad_live():
                 if mid in str(w.get("worker_name") or ""):
                     return w
             return None
+        def pool_worker(name):
+            for w in pool_workers:
+                if str(w.get("worker_name") or "") == str(name):
+                    return w
+            return None
         def pgpu(w):
             gi = (w or {}).get("gpu_info") or []
             return str((gi[0] if gi else {}).get("name") or "").replace("NVIDIA GeForce ", "").strip()
         def phr(w):
             gi = (w or {}).get("gpu_info") or []
             return round(sum(hashrate_th(g.get("hashrate")) for g in gi), 2) if gi else None
-        prices = []
-        for nm in names:
+        def fetch_group(nm):  # 单组: 拉 组详情 + 实例; 返回片段, 由主线程按 names 顺序合并
+            out = {"name": nm, "counts": None, "gpu_classes": [], "prices": [], "instances": [], "error": None}
             prio = "medium"
             label = None
             try:
                 g = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}", key)
-                res["counts"][nm] = (g.get("current_state") or {}).get("instance_status_counts") or {}
+                out["counts"] = (g.get("current_state") or {}).get("instance_status_counts") or {}
                 prio = g.get("priority") or "medium"
                 cls = ((g.get("container") or {}).get("resources") or {}).get("gpu_classes") or []
                 for c in cls:
-                    nm = gp.get(c, {}).get("name")
-                    if nm and nm not in res["gpu_classes"]:
-                        res["gpu_classes"].append(nm)
+                    cname = gp.get(c, {}).get("name")
+                    if cname:
+                        out["gpu_classes"].append(cname)
                 ps = [float(gp.get(c, {}).get("prices", {}).get(prio)) for c in cls
                       if gp.get(c, {}).get("prices", {}).get(prio) is not None]
                 if ps:
                     lo, hi = min(ps), max(ps)
                     label = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
-                    prices += ps
+                    out["prices"] += ps
             except Exception:
                 pass
             # 按组优先级建 GPU名→精确价 映射; 命中用单价, 否则兜底表, 再否则回退区间 label
@@ -339,17 +394,17 @@ def salad_live():
                 d = salad_get(f"{pre}/{urllib.parse.quote(str(nm))}/instances", key)
                 insts = d.get("instances") or []
             except Exception as ie:
-                res["error"] = f"instances: {type(ie).__name__}: {ie}"
+                out["error"] = f"instances: {type(ie).__name__}: {ie}"
             for inst in insts:
                 iid = str(inst.get("instance_id") or inst.get("id") or "")
                 mid = str(inst.get("machine_id") or "")
                 w = watch.get(f"{nm}:{iid}") or {}
-                pw = pool_match(mid)
+                pw = pool_match(mid) or pool_worker(nm)
                 gpu = pgpu(pw) or (w.get("gpu") or "").strip() or "?"
                 hr = w.get("last_hashrate_th")
                 if hr is None:
                     hr = phr(pw)
-                res["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
+                out["instances"].append({"id": iid, "machine_id": mid, "gpu": gpu, "group": nm,
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
                                          "price": inst_price_num(gpu),
@@ -362,16 +417,32 @@ def salad_live():
                     mm = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", wn)
                     mid = mm.group(0) if mm else wn
                     igpu = pgpu(w) or "?"
-                    res["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
+                    out["instances"].append({"id": mid, "machine_id": mid, "gpu": igpu,
                                              "group": nm, "state": "running", "started_epoch": None,
                                              "price": inst_price_num(igpu),
                                              "price_label": inst_price(igpu), "hashrate_th": phr(w)})
+            return out
+        if names:
+            with ThreadPoolExecutor(max_workers=min(SALAD_WORKERS, len(names))) as ex:
+                group_results = list(ex.map(fetch_group, names))  # map 保序 → 合并顺序同原串行
+        else:
+            group_results = []
+        prices = []
+        for gr in group_results:
+            if gr["counts"] is not None:
+                res["counts"][gr["name"]] = gr["counts"]
+            for cn in gr["gpu_classes"]:
+                if cn not in res["gpu_classes"]:
+                    res["gpu_classes"].append(cn)
+            res["instances"].extend(gr["instances"])
+            prices += gr["prices"]
+            if gr["error"] and not res["error"]:
+                res["error"] = gr["error"]
         if prices:
             lo, hi = min(prices), max(prices)
             res["price_label"] = f"${lo:.3f}/h" if abs(lo - hi) < 1e-9 else f"${lo:.3f}–{hi:.3f}/h"
     except Exception as e:
         res["error"] = f"{type(e).__name__}: {e}"
-    _salad.update(data=res, ts=now)
     return res
 
 def _http_json(method, url, headers, body=None):
@@ -382,24 +453,34 @@ def _http_json(method, url, headers, body=None):
         return json.loads(r.read().decode("utf-8"))
 
 _bal = {}  # plat -> (value|None, ts)
-BAL_TTL = 60.0
+BAL_STALE_MAX = 300.0  # serve-stale: 后台刷新余额; 超此值才在请求线程兜底重拉(余额变动慢, 上限放宽)
 
-def platform_balance(plat):
-    """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None。"""
+def estimate_manual_balance(balance_usd, asof_epoch, burn_hourly, now):
+    """从手填余额按 burn rate 自动递减的估算当前余额(USD, 不为负)。
+    Salad/TensorDock 无余额 API: 用户在 config 填一次 balance_usd(+自动记录 balance_asof),
+    看板据当前消耗速率估算 now 时刻余额。不知道充值/精确计费, 会逐渐偏差, 需偶尔回填校准。"""
+    elapsed_h = max(0.0, (now - asof_epoch) / 3600.0)
+    return round(max(0.0, float(balance_usd) - float(burn_hourly) * elapsed_h), 2)
+
+def platform_balance(account_id, force=False):
+    """账户余额(USD)。Vast=credit, RunPod=clientBalance; TensorDock/Salad 无可用 API → None(可手填估算)。
+    serve-stale: 请求线程读缓存不阻塞, 后台 force 刷新。"""
     now = time.time()
-    c = _bal.get(plat)
-    if c and now - c[1] < BAL_TTL:
+    c = _bal.get(account_id)
+    if c and not force and (now - c[1] < BAL_STALE_MAX):
         return c[0]
     val = None
+    plat = platform_of(account_id)
     env = read_env()
+    kv = key_var_for(account_id)
     try:
         if plat == "vast":
-            k = env.get("VAST_API_KEY") or os.environ.get("VAST_API_KEY", "")
+            k = env.get(kv) or os.environ.get(kv, "")
             if k:
                 d = _http_json("GET", "https://console.vast.ai/api/v0/users/current/", {"Authorization": "Bearer " + k})
                 val = d.get("credit")
         elif plat == "runpod":
-            k = env.get("RUNPOD_API_KEY") or os.environ.get("RUNPOD_API_KEY", "")
+            k = env.get(kv) or os.environ.get(kv, "")
             if k:
                 d = _http_json("POST", "https://api.runpod.io/graphql",
                                {"Authorization": "Bearer " + k, "Content-Type": "application/json"},
@@ -409,14 +490,14 @@ def platform_balance(plat):
             val = round(float(val), 2)
     except Exception:
         val = None
-    _bal[plat] = (val, now)
+    _bal[account_id] = (val, now)
     return val
 
-def active_rentals(plat):
-    st = read_state(plat)
+def active_rentals(account_id):
+    st = read_state(account_id)
     out = []
-    if plat == "salad":
-        for i in salad_live().get("instances", []):
+    if platform_of(account_id) == "salad":
+        for i in salad_live(account_id).get("instances", []):
             out.append({"id": i["id"], "gpu": i.get("gpu") or "?", "price": i.get("price"),
                         "price_label": i.get("price_label"),
                         "hashrate_th": i.get("hashrate_th"),
@@ -438,7 +519,7 @@ def tick_spend():
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
         now = time.time()
         hourly = 0.0
-        for plat in ["vast", "runpod", "tensordock", "salad"]:
+        for plat in list_accounts():
             for r in active_rentals(plat):
                 try:
                     hourly += float(r.get("price") or 0)
@@ -466,6 +547,26 @@ def spend_loop():
         except Exception:
             pass
         time.sleep(60)
+
+
+def _refresh_once():
+    """后台预热所有缓存一轮: 矿池 + 各账号 salad 实时 + 余额。让 HTTP 请求只读缓存、永不阻塞。"""
+    pool_data(force=True)
+    for acct in list_accounts():
+        try:
+            if platform_of(acct) == "salad":
+                salad_live(acct, force=True)
+            platform_balance(acct, force=True)
+        except Exception:
+            pass
+
+def _refresh_loop():
+    while True:
+        try:
+            _refresh_once()
+        except Exception:
+            pass
+        time.sleep(REFRESH_INTERVAL)
 
 
 # ---------- 累计产出(自看板起算) ----------
@@ -565,9 +666,10 @@ def build_summary():
         wlist.append({"name": w.get("worker_name"), "th": round(wth, 2), "ip": w.get("ip"),
                       "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
     per_plat, running = {}, 0
-    for plat in PLATFORMS:
-        n = len(active_rentals(plat))
-        per_plat[plat] = n
+    for acct in list_accounts():
+        n = len(active_rentals(acct))
+        plat = platform_of(acct)
+        per_plat[plat] = per_plat.get(plat, 0) + n
         running += n
     stats = read_json(STATS_PATH, {})
     cp = coin_price()
@@ -594,52 +696,69 @@ def build_summary():
 def build_rentals():
     now = time.time()
     res = {}
-    for plat in PLATFORMS:
-        cfg = read_config(plat).get(plat, {})
+    for acct in list_accounts():
+        plat = platform_of(acct)
+        cfg = read_config(acct).get(plat, {})
         items = []
-        for r in active_rentals(plat):
+        for r in active_rentals(acct):
             dur = int(now - float(r["created_epoch"])) if r.get("created_epoch") else None
             d = dict(r)
             d["duration_seconds"] = dur
             items.append(d)
-        res[plat] = {
+        res[acct] = {
+            "platform": plat,
+            "account_id": acct,
+            "label": account_label(acct),
             "enabled": cfg.get("enabled"),
             "create_enabled": cfg.get("create_enabled"),
-            "rent_paused": rent_paused(plat),
-            "process_running": pid_for(plat) is not None,
+            "rent_paused": rent_paused(acct),
+            "process_running": pid_for(acct) is not None,
             "thresholds": cfg.get("thresholds"),
             "min_hashrate_th": cfg.get("min_hashrate_th"),
             "machines": items,
         }
-        bal = platform_balance(plat)
+        bal = platform_balance(acct)
         burn = sum(float(m.get("price") or 0) for m in items)
-        res[plat]["balance"] = bal
-        res[plat]["burn_hourly"] = round(burn, 4)
-        res[plat]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
+        estimated = False
+        if bal is None and cfg.get("balance_usd") is not None:  # 无 API 余额时用手填值按消耗估算
+            try:
+                asof = iso_to_epoch(cfg.get("balance_asof")) or now
+                bal = estimate_manual_balance(cfg.get("balance_usd"), asof, burn, now)
+                estimated = True
+            except Exception:
+                bal = None
+        res[acct]["balance"] = bal
+        res[acct]["balance_estimated"] = estimated
+        res[acct]["balance_editable"] = plat in NO_BALANCE_API  # 无 API 的平台允许总览内联手填
+        res[acct]["balance_usd"] = cfg.get("balance_usd")        # 原始手填值, 供编辑框预填
+        res[acct]["burn_hourly"] = round(burn, 4)
+        res[acct]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
         if plat == "salad":
-            sl = salad_live()
+            sl = salad_live(acct)
             cnts = {}
             for c in (sl.get("counts") or {}).values():
                 for k, v in (c or {}).items():
                     cnts[k] = cnts.get(k, 0) + (v or 0)
-            res[plat]["salad_status"] = cnts
-            res[plat]["salad_error"] = sl.get("error")
-            res[plat]["salad_gpu_classes"] = sl.get("gpu_classes") or []
+            res[acct]["salad_status"] = cnts
+            res[acct]["salad_error"] = sl.get("error")
+            res[acct]["salad_gpu_classes"] = sl.get("gpu_classes") or []
     return res
 
 def build_config():
     env = read_env()
     res = {}
-    for plat in PLATFORMS:
-        kn = KEYNAME[plat]
+    for acct in list_accounts():
+        kn = key_var_for(acct)
         v = env.get(kn, "")
         is_set = bool(v) and not v.startswith("replace_with")
-        res[plat] = {
+        res[acct] = {
+            "platform": platform_of(acct),
+            "label": account_label(acct),
             "key_name": kn,
             "key_set": is_set,
             "key_mask": ("…" + v[-4:]) if (is_set and len(v) >= 4) else ("已设置" if is_set else ""),
-            "process_running": pid_for(plat) is not None,
-            "rent_paused": rent_paused(plat),
+            "process_running": pid_for(acct) is not None,
+            "rent_paused": rent_paused(acct),
         }
     return res
 
@@ -665,26 +784,30 @@ def gpu_rows(sub):
 
 def build_full_config():
     env = read_env()
-    all_cfgs = {plat: read_config(plat) for plat in PLATFORMS}
-    base = all_cfgs["vast"]
+    accts = list_accounts()
+    all_cfgs = {acct: read_config(acct) for acct in accts}
+    base = all_cfgs[accts[0]] if accts else {}
     common = {k: base.get(k) for k in COMMON_KEYS}
-    # P2-E: 各 common 字段在 4 平台是否有分歧(供前端提示 + 保存覆盖确认)
+    # P2-E: 各账号 common 字段是否有分歧(供前端提示 + 保存覆盖确认)
     common_diff = {}
     for k in COMMON_KEYS:
-        vals = {plat: all_cfgs[plat].get(k) for plat in PLATFORMS}
+        vals = {acct: all_cfgs[acct].get(k) for acct in accts}
         if len({json.dumps(v, ensure_ascii=False, sort_keys=True) for v in vals.values()}) > 1:
             common_diff[k] = vals
     plats = {}
-    for plat in PLATFORMS:
-        cfg = all_cfgs[plat]
+    for acct in accts:
+        plat = platform_of(acct)
+        cfg = all_cfgs[acct]
         sub = cfg.get(plat, {}) or {}
-        kn = KEYNAME[plat]
+        kn = key_var_for(acct)
         v = env.get(kn, "")
         is_set = bool(v) and not v.startswith("replace_with")
         spec = []
         for key, typ in SPECIFIC[plat]:
             spec.append({"key": key, "type": typ, "value": sub.get(key)})
-        plats[plat] = {
+        plats[acct] = {
+            "platform": plat,
+            "label": account_label(acct),
             "enabled": bool(sub.get("enabled")),
             "has_create": plat in HAS_CREATE,
             "create_enabled": bool(sub.get("create_enabled")),
@@ -694,8 +817,8 @@ def build_full_config():
             "key_name": kn,
             "key_set": is_set,
             "key_mask": ("…" + v[-4:]) if (is_set and len(v) >= 4) else "",
-            "process_running": pid_for(plat) is not None,
-            "rent_paused": rent_paused(plat),
+            "process_running": pid_for(acct) is not None,
+            "rent_paused": rent_paused(acct),
             "raw": json.dumps(cfg, ensure_ascii=False, indent=2),
         }
     return {"common": common, "common_diff": common_diff, "platforms": plats}
@@ -708,99 +831,122 @@ def backup_and_write(path, obj):
         pass
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
 
-def save_platform_cfg(plat, patch):
-    if plat not in PLATFORMS or not isinstance(patch, dict):
+def save_platform_cfg(acct, patch):
+    if acct not in list_accounts() or not isinstance(patch, dict):
         return {"error": "参数无效"}
-    p = cfg_path(plat)
+    plat = platform_of(acct)
+    p = cfg_path(acct)
     cfg = read_json(p, {})
     sub = cfg.get(plat, {}) or {}
+    if "balance_usd" in patch:  # 手填余额变化时自动记录时间, 供看板按消耗递减估算
+        try:
+            old = sub.get("balance_usd")
+            if patch["balance_usd"] is not None and (old is None or float(old) != float(patch["balance_usd"])):
+                patch = dict(patch)
+                patch["balance_asof"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        except Exception:
+            pass
     sub.update(patch)
     cfg[plat] = sub
     backup_and_write(p, cfg)
-    return {"ok": True, "platform": plat}
+    return {"ok": True, "platform": acct}
 
 def save_common_cfg(data):
     if not isinstance(data, dict):
         return {"error": "参数无效"}
     data = {k: v for k, v in data.items() if k in COMMON_KEYS}
-    for plat in PLATFORMS:
-        p = cfg_path(plat)
+    accts = list_accounts()
+    for acct in accts:
+        p = cfg_path(acct)
         cfg = read_json(p, {})
         cfg.update(data)
         backup_and_write(p, cfg)
-    return {"ok": True, "written": len(PLATFORMS)}
+    return {"ok": True, "written": len(accts)}
 
-def save_raw_cfg(plat, raw):
-    if plat not in PLATFORMS:
-        return {"error": "平台无效"}
+def save_raw_cfg(acct, raw):
+    if acct not in list_accounts():
+        return {"error": "账号无效"}
     try:
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             return {"error": "顶层必须是 JSON 对象"}
     except Exception as e:
         return {"error": f"JSON 非法: {e}"}
-    backup_and_write(cfg_path(plat), obj)
-    return {"ok": True, "platform": plat}
+    backup_and_write(cfg_path(acct), obj)
+    return {"ok": True, "platform": acct}
 
-def launch_platform(plat):
+def launch_platform(acct):
     env = dict(os.environ)
     for k, v in read_env().items():
         env[k] = v
-    env["SNIPER_LOG_PATH"] = f"logs/{plat}.log"
-    env["SNIPER_STATE_PATH"] = f"state.{plat}.json"
+    # 多账号: 把该账号的 key 注入成 sniper 期望的标准变量名(account2 的 key 在 *_2)
+    kv = read_env().get(key_var_for(acct), "")
+    std = KEYNAME.get(platform_of(acct), "")
+    if kv and std:
+        env[std] = kv
+    env["SNIPER_LOG_PATH"] = f"logs/{acct}.log"
+    env["SNIPER_STATE_PATH"] = f"state.{acct}.json"
     try:
-        logf = open(ROOT / f"logs/{plat}.log", "a")
-        subprocess.Popen(["python3", "sniper.py", "--config", f"configs/config.{plat}.json", "--live"],
+        logf = open(ROOT / f"logs/{acct}.log", "a")
+        subprocess.Popen(["python3", "sniper.py", "--config", f"configs/config.{acct}.json", "--live"],
                          cwd=str(ROOT), env=env, stdout=logf, stderr=logf, start_new_session=True)
         return True
     except Exception:
         return False
 
-def restart_platform(plat):
-    if plat not in PLATFORMS:
-        return {"error": "平台无效"}
-    pid = pid_for(plat)
+def restart_platform(acct):
+    if acct not in list_accounts():
+        return {"error": "账号无效"}
+    pid = pid_for(acct)
     if pid:
         try:
             subprocess.run(["kill", pid])
         except Exception:
             pass
         time.sleep(2)
-    ok = launch_platform(plat)
+    ok = launch_platform(acct)
     time.sleep(1.5)
-    return {"ok": ok, "platform": plat, "process_running": pid_for(plat) is not None}
+    return {"ok": ok, "platform": acct, "process_running": pid_for(acct) is not None}
 
-def do_rent_toggle(plat, paused):
+def do_rent_toggle(acct, paused):
     CONTROL_DIR.mkdir(exist_ok=True)
-    flag = CONTROL_DIR / f"{plat}.rent-paused"
+    # sniper 按平台名读 control/<平台>.rent-paused, 故暂停是平台级(同平台账号联动)
+    flag = CONTROL_DIR / f"{platform_of(acct)}.rent-paused"
     launched = False
     if paused:
         flag.touch()
     else:
         if flag.exists():
             flag.unlink()
-        if pid_for(plat) is None:
-            launched = launch_platform(plat)
+        if pid_for(acct) is None:
+            launched = launch_platform(acct)
             time.sleep(1.5)
-    return {"ok": True, "platform": plat, "rent_paused": flag.exists(),
-            "process_running": pid_for(plat) is not None, "launched": launched}
+    return {"ok": True, "platform": acct, "rent_paused": flag.exists(),
+            "process_running": pid_for(acct) is not None, "launched": launched}
 
-def do_terminate(plat, mid, group=None):
+def do_terminate(acct, mid, group=None):
     if not mid:
         return {"error": "缺少实例 id"}
     try:
         import sniper as S
+        plat = platform_of(acct)
+        cfg = read_config(acct)
+        # 注入该账号 key, 让销毁/reallocate 用对账号(account2 的 key 在 *_2)
+        kv = read_env().get(key_var_for(acct), "")
+        std = KEYNAME.get(plat, "")
+        if kv and std:
+            os.environ[std] = kv
         if plat == "vast":
             r = S.destroy_vast_instance(mid)
         elif plat == "runpod":
             r = S.delete_runpod_pod(mid)
         elif plat == "tensordock":
-            r = S.delete_tensordock_instance(read_config("tensordock"), mid)
+            r = S.delete_tensordock_instance(cfg, mid)
         elif plat == "salad":
-            r = S.reallocate_salad_instance(read_config("salad"), group or "", mid)
+            r = S.reallocate_salad_instance(cfg, group or "", mid)
         else:
             return {"error": "平台无效"}
-        return {"ok": True, "platform": plat, "id": mid, "result": r}
+        return {"ok": True, "platform": acct, "id": mid, "result": r}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
 
@@ -891,8 +1037,8 @@ class H(BaseHTTPRequestHandler):
                 q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
                 plat = (q.get("platform") or [""])[0]
                 n = (q.get("lines") or ["300"])[0]
-                if plat not in PLATFORMS:
-                    return self._send(400, {"error": "平台无效"})
+                if plat not in list_accounts():
+                    return self._send(400, {"error": "账号无效"})
                 return self._send(200, {"platform": plat, "log": tail_log(plat, n)})
         return self._send(404, {"error": "not found"})
 
@@ -919,19 +1065,19 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/key":
             plat = str(data.get("platform", ""))
             value = str(data.get("value", "")).strip()
-            if plat not in KEYNAME or not value:
+            if plat not in list_accounts() or not value:
                 return self._send(400, {"error": "参数无效"})
-            set_env_key(KEYNAME[plat], value)
+            set_env_key(key_var_for(plat), value)
             return self._send(200, {"ok": True, "platform": plat})
         if path == "/api/rent-toggle":
             plat = str(data.get("platform", ""))
-            if plat not in PLATFORMS:
-                return self._send(400, {"error": "平台无效"})
+            if plat not in list_accounts():
+                return self._send(400, {"error": "账号无效"})
             return self._send(200, do_rent_toggle(plat, bool(data.get("paused"))))
         if path == "/api/terminate":
             plat = str(data.get("platform", ""))
-            if plat not in PLATFORMS:
-                return self._send(400, {"error": "平台无效"})
+            if plat not in list_accounts():
+                return self._send(400, {"error": "账号无效"})
             return self._send(200, do_terminate(plat, str(data.get("id", "")), str(data.get("group", "")) or None))
         if path == "/api/save-platform":
             return self._send(200, save_platform_cfg(str(data.get("platform", "")), data.get("data")))
@@ -1015,6 +1161,20 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 .platbox .top{display:flex;align-items:center;gap:9px;margin-bottom:12px}
 .platbox .top b{font-size:14px;font-weight:700;letter-spacing:.8px;color:var(--hi)}
 .bal{margin-left:auto;color:var(--mut);font-size:12px;white-space:nowrap;font-family:var(--mono)}
+.bal.editable{cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;border:1px solid transparent;transition:.15s}
+.bal.editable:hover{color:var(--hi);background:var(--acc2);border-color:rgba(63,224,197,.32)}
+.ed-pen{font-size:10.5px;opacity:.45;transition:.15s}
+.bal.editable:hover .ed-pen{opacity:1;color:var(--acc)}
+.bal-edit{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono)}
+.bal-edit .cur{color:var(--mut);font-size:13px}
+.bal-edit input{width:84px;background:var(--bg);border:1px solid var(--bd2);border-radius:8px;color:var(--hi);font-family:var(--mono);font-size:13px;padding:6px 9px;outline:none;text-align:right;-moz-appearance:textfield}
+.bal-edit input::-webkit-outer-spin-button,.bal-edit input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.bal-edit input:focus{border-color:var(--acc);box-shadow:0 0 0 2px rgba(63,224,197,.16)}
+.bal-edit .bb{border:1px solid var(--bd);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:.14s;background:var(--card)}
+.bal-edit .bb.ok{background:var(--acc2);color:var(--acc);border-color:rgba(63,224,197,.42)}
+.bal-edit .bb.ok:hover{background:rgba(63,224,197,.24)}
+.bal-edit .bb.x{color:var(--mut)}
+.bal-edit .bb.x:hover{color:var(--hi);background:rgba(255,255,255,.07)}
 .req{color:var(--bad);font-size:10px;border:1px solid rgba(255,122,122,.4);background:var(--badbg);border-radius:5px;padding:1px 6px;letter-spacing:.5px}
 .cdiff{color:var(--warn);font-size:10px;border:1px solid rgba(255,178,89,.4);background:var(--warnbg);border-radius:5px;padding:1px 6px;cursor:help}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
@@ -1117,10 +1277,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 <div class="ni" data-nav=lk onclick="nav('lk')">工具集</div>
 <div class="nigrp adm">配置工作台</div>
 <div class="ni sub adm" data-nav=cf:common onclick="nav('cf:common')">全局配置</div>
-<div class="ni sub adm" data-nav=cf:vast onclick="nav('cf:vast')">VAST</div>
-<div class="ni sub adm" data-nav=cf:runpod onclick="nav('cf:runpod')">RUNPOD</div>
-<div class="ni sub adm" data-nav=cf:tensordock onclick="nav('cf:tensordock')">TENSORDOCK</div>
-<div class="ni sub adm" data-nav=cf:salad onclick="nav('cf:salad')">SALAD</div>
+<div id=cfaccts></div>
 <div class="nigrp">文档</div>
 <div class="ni sub" data-nav=doc:guide onclick="nav('doc:guide')">工具说明</div>
 <div class="ni sub" data-nav=doc:tutorial onclick="nav('doc:tutorial')">挖珠教程</div>
@@ -1134,6 +1291,7 @@ select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-rad
 
 <script>
 let view='ov',subtab='common',docsub='guide',ROLE='admin';
+let EDITING=null,BALVAL={};   // 总览余额内联编辑: 正在编辑的账号 / 各账号手填余额预填值
 function applyRole(){let adm=ROLE=='admin';
 document.querySelectorAll('.adm').forEach(e=>e.style.display=adm?'':'none');
 let u=document.getElementById('uname');if(u)u.textContent=adm?'admin':'访客 GUEST';
@@ -1165,22 +1323,24 @@ function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;ret
 async function saveCoinPrice(){let v=parseFloat(document.getElementById('cpin').value);if(isNaN(v)||v<0){toast('币价无效');return;}try{let r=await api('/api/coin-price',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:v})});if(r&&r.ok){toast('币价已更新 $'+v);refresh();}else toast((r&&r.error)||'保存失败');}catch(e){}}
 async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
-async function renderOverview(){let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
+async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
-let plat='';for(const p of ['vast','runpod','tensordock','salad']){const v=r[p];
+let plat='';for(const aid of Object.keys(r)){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
-let bh;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');bh=`<span class=bal>余额 $${fnum(v.balance,2)}${t?' · '+t:''}</span>`;}else{bh='<span class=bal>余额 —</span>';}
+let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
+let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
-let rows=(v.machines||[]).map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+let rows=(v.machines||[]).map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
-return `<tr><td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=6 class=muted>无在跑机器</td></tr>`;
-plat+=`<div class=platbox><div class=top><b>${p.toUpperCase()}</b>${badges}${bh}</div>${sstat}
-<table><tr><th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
+return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
+plat+=`<div class=platbox><div class=top><b>${esc(v.label||aid)}</b>${badges}${bh}</div>${sstat}
+<table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
@@ -1205,6 +1365,8 @@ ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:
 
 let CFG=null;
 async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch(e){return}CFG=d;
+let nv=Object.keys(d.platforms).map(a=>`<div class="ni sub${subtab==a?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc(d.platforms[a].label||a)}</div>`).join('');
+let ce=document.getElementById('cfaccts');if(ce)ce.innerHTML=nv;
 document.getElementById('cf').innerHTML=subtab=='common'?commonHtml(d):platformHtml(d.platforms[subtab],subtab);}
 function commonHtml(d){let c=d.common;let diff=d.common_diff||{};
 let cf=(k,label,req,ph)=>{let w='';
@@ -1235,8 +1397,8 @@ let key=v.key_set?`<span class="pill ok">已设置 ${esc(v.key_mask)}</span>`:'<
 let gpus=(v.gpus||[]).map((g,i)=>gpuRowHtml(p,i,g)).join('');
 let spec=(v.specific||[]).map(s=>specHtml(p,s)).join('');
 let rentBtn=v.rent_paused?`<button class=b-acc onclick="toggle('${p}',false)">▶ 启动租用</button>`:`<button class=b-warn onclick="toggle('${p}',true)">⏸ 暂停租用</button>`;
-return `<div class=lbl>${p.toUpperCase()} · 平台配置</div>
-<div class=platbox id=box_${p}><div class=top><b>${p.toUpperCase()}</b>${proc}</div>
+return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
+<div class=platbox id=box_${p}><div class=top><b>${esc(v.label||p)}</b>${proc}</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
@@ -1319,10 +1481,14 @@ async function savekey(p){const el=document.getElementById('k_'+p);const val=el.
 let r=await api('/api/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,value:val})});
 el.value='';toast(r.ok?(p+' API key 已保存'):'失败');renderConfigTab();}
 async function toggle(p,paused){await api('/api/rent-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,paused:paused})});renderConfigTab();}
-async function term(p,id,group){let label=p=='salad'?'迁移(reallocate)':'关闭并销毁';
-if(!confirm('确定要'+label+'这台机器吗?\n'+p+' · '+id))return;
-let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:p,id:id,group:group})});
+async function term(aid,plat,id,group){let label=plat=='salad'?'迁移(reallocate)':'关闭并销毁';
+if(!confirm('确定要'+label+'这台机器吗?\n'+aid+' · '+id))return;
+let r=await api('/api/terminate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,id:id,group:group})});
 toast(r.error?('失败: '+r.error):'已执行 '+id);renderOverview();}
+function editBal(aid){EDITING=aid;const el=document.getElementById('bal_'+aid);if(!el)return;el.classList.remove('editable');el.removeAttribute('onclick');el.removeAttribute('title');const cur=(BALVAL[aid]!=null?BALVAL[aid]:'');el.innerHTML=`<span class=bal-edit><span class=cur>$</span><input id="bali_${esc(aid)}" type=number step=0.01 min=0 value="${cur}" placeholder="0.00" onkeydown="balKey(event,'${esc(aid)}')"><button class="bb ok" title=保存 onclick="saveBal('${esc(aid)}')">✓</button><button class="bb x" title=取消 onclick="cancelBal()">✕</button></span>`;const inp=document.getElementById('bali_'+aid);inp.focus();inp.select();}
+function balKey(e,aid){if(e.key=='Enter'){e.preventDefault();saveBal(aid);}else if(e.key=='Escape'){e.preventDefault();cancelBal();}}
+function cancelBal(){EDITING=null;renderOverview();}
+async function saveBal(aid){const inp=document.getElementById('bali_'+aid);if(!inp){EDITING=null;return;}const s=inp.value.trim();let bu=(s===''?null:parseFloat(s));if(s!==''&&!(bu>=0)){toast('请输入有效金额(≥0)');inp.focus();return;}EDITING=null;let r;try{r=await api('/api/save-platform',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,data:{balance_usd:bu}})});}catch(e){toast('保存失败');renderOverview();return;}toast(r&&r.ok?'余额已更新':('失败: '+((r&&r.error)||'未知')));renderOverview();}
 const LINKS=[
 {t:'官网',i:'🌐',items:[['Pearl Research','https://pearlresearch.ai/']]},
 {t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
@@ -1433,6 +1599,7 @@ setInterval(()=>{if(view=='ov')renderOverview();},10000);initTheme();initRole();
 def main():
     CONTROL_DIR.mkdir(exist_ok=True)
     threading.Thread(target=spend_loop, daemon=True).start()
+    threading.Thread(target=_refresh_loop, daemon=True).start()  # 后台预热缓存, 请求只读缓存不阻塞
     port = int(CONF.get("port", 8787))
     srv = ThreadingHTTPServer(("0.0.0.0", port), H)
     print(f"pearl dashboard on http://0.0.0.0:{port}  (user={CONF.get('user','admin')})", flush=True)
