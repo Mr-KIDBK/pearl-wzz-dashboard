@@ -36,10 +36,13 @@ SPECIFIC = {
              ("min_reliability", "num"), ("disk_gb", "num"), ("prefer_countries", "list")],
     "runpod": [("cloud_types", "list"), ("country_codes", "list"), ("container_disk_gb", "num"),
                ("create_observed_price_factor", "num"), ("short_exit_blacklist_seconds", "num")],
-    "tensordock": [("city", "str"), ("storage_gb", "num"), ("vcpu_count", "num"),
+    "tensordock": [("excluded_states", "list"), ("storage_gb", "num"), ("vcpu_count", "num"),
                    ("ram_gb", "num"), ("seen_ttl_seconds", "num")],
     "salad": [("organization_name", "str"), ("project_name", "str"), ("include_container_groups", "list"),
-              ("low_efficiency_stop_seconds", "num"), ("reallocate_cooldown_seconds", "num"),
+              ("default_min_hashrate_th", "num"), ("per_model_threshold_enabled", "bool"),
+              ("treat_missing_log_as_zero", "bool"), ("low_efficiency_stop_seconds", "num"),
+              ("reallocate_cooldown_seconds", "num"), ("hashrate_watch_interval_seconds", "num"),
+              ("log_lookback_seconds", "num"), ("missing_worker_as_zero", "bool"),
               ("alphapool_worker_api_enabled", "bool"), ("alphapool_reallocate_enabled", "bool"),
               ("balance_usd", "num")],
 }
@@ -109,6 +112,8 @@ SESS_TTL = 2592000  # 30 天;签名 cookie 无状态, 重启不掉登录
 _pool = {"data": None, "ts": 0.0}
 POOL_STALE_MAX = 90.0  # serve-stale: 后台刷新; 超此值才在请求线程兜底重拉
 _lock = threading.Lock()
+# pearl 折算币价(USD/coin); 可用环境变量 COIN_PRICE_USD 覆盖, 默认 0.75。
+COIN_PRICE_USD = float(os.environ.get("COIN_PRICE_USD") or 0.75)
 
 
 # ---------- 读 ----------
@@ -251,8 +256,9 @@ def iso_to_epoch(s):
         return None
 
 def gpu_key(name):
-    """GPU 名归一化: 去掉 ' (xx GB)' 后缀并小写, 用于跨数据源匹配。"""
-    return re.sub(r"\s*\(.*?\)\s*$", "", str(name or "")).strip().lower()
+    """GPU 名归一化: 去掉 ' (xx GB)' 后缀、结尾 'GPU' 字样(移动卡如 'RTX 5090 Laptop GPU')并小写, 用于跨数据源匹配。"""
+    s = re.sub(r"\s*\(.*?\)\s*$", "", str(name or "")).strip().lower()
+    return re.sub(r"\s+gpu$", "", s).strip()
 
 # Salad 官网各 GPU 档价(low/medium/high), 仅作 gpu-classes API 失败时的兜底
 SALAD_GPU_PRICES = {
@@ -536,6 +542,10 @@ def spend_loop():
             tick_spend()
         except Exception:
             pass
+        try:
+            tick_output()
+        except Exception:
+            pass
         time.sleep(60)
 
 
@@ -559,6 +569,92 @@ def _refresh_loop():
         time.sleep(REFRESH_INTERVAL)
 
 
+# ---------- 累计产出(自看板起算) ----------
+# 产出 = 矿池 balance_transactions 里的正向 epoch credit(负向 Auto Payment 是提现, 不算产出)
+# + 当前待结算 pending。首次观测时把已有 credit 标记为基线、记录起始 pending,
+# 之后只累加新出现的 credit; 显示值 = 新增已结算 + 当前 pending - 起始 pending(从 0 起涨)。
+def tick_output(pool=None):
+    if pool is None:
+        pool = pool_data()
+    if not isinstance(pool, dict):
+        return float(read_json(STATS_PATH, {}).get("cumulative_output", 0.0))
+    pending = float((pool.get("pending_rewards") or {}).get("total_pending") or 0)
+    credits = [(int(t.get("timestamp") or 0), float(t.get("amount") or 0))
+               for t in (pool.get("balance_transactions") or [])
+               if float(t.get("amount") or 0) > 0]
+    with _lock:
+        s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
+        if not s.get("output_init"):
+            s["output_init"] = True
+            s["output_last_credit_ts"] = max([ts for ts, _ in credits], default=0)
+            s["output_start_pending"] = pending
+            s["output_settled_acc"] = 0.0
+        else:
+            last = int(s.get("output_last_credit_ts") or 0)
+            newmax = last
+            for ts, amt in credits:
+                if ts > last:
+                    s["output_settled_acc"] = float(s.get("output_settled_acc") or 0.0) + amt
+                    if ts > newmax:
+                        newmax = ts
+            s["output_last_credit_ts"] = newmax
+        cumulative = (float(s.get("output_settled_acc") or 0.0) + pending
+                      - float(s.get("output_start_pending") or 0.0))
+        if cumulative < 0:
+            cumulative = 0.0
+        s["cumulative_output"] = cumulative
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+        return cumulative
+
+
+# ---------- 币价 / 重置统计 ----------
+def coin_price():
+    try:
+        v = read_json(STATS_PATH, {}).get("coin_price_usd")
+        return float(v) if v is not None else COIN_PRICE_USD
+    except Exception:
+        return COIN_PRICE_USD
+
+def set_coin_price(v):
+    try:
+        p = float(v)
+    except Exception:
+        return {"error": "币价无效"}
+    if not (0 <= p <= 1e6):
+        return {"error": "币价超出范围"}
+    with _lock:
+        s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
+        s["coin_price_usd"] = p
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+    return {"ok": True, "coin_price_usd": p}
+
+def reset_stats():
+    """累计租金/产出/利润全部清零, 从现在重新起算; 保留已设的币价。"""
+    with _lock:
+        old = read_json(STATS_PATH, {})
+        now = time.time()
+        s = {"cumulative_usd": 0.0, "current_hourly_usd": 0.0,
+             "last_epoch": now, "reset_epoch": now}
+        if old.get("coin_price_usd") is not None:
+            s["coin_price_usd"] = old["coin_price_usd"]
+        # 不写 output_* → 下次 tick_output 自动以当前 pending 重新基线
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+    try:
+        tick_output()   # 立刻重新基线产出, 卡片即时归零
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 # ---------- 总览数据 ----------
 def build_summary():
     pool = pool_data()
@@ -576,20 +672,23 @@ def build_summary():
         per_plat[plat] = per_plat.get(plat, 0) + n
         running += n
     stats = read_json(STATS_PATH, {})
-    pending = recent = 0.0
-    if isinstance(pool, dict):
-        pending = float((pool.get("pending_rewards") or {}).get("total_pending") or 0)
-        recent = sum(float(t.get("amount") or 0) for t in (pool.get("balance_transactions") or []))
+    cp = coin_price()
+    rent_usd = round(float(stats.get("cumulative_usd", 0.0)), 4)
+    output = round(tick_output(pool), 4)     # 累计产出 pearl(自重置起算)
+    output_usd = round(output * cp, 2)       # 折合 USD
     return {
         "wallet": prl_address(),
         "running_machines": running,
         "running_by_platform": per_plat,
         "total_hashrate_th": round(total_th, 2),
         "workers": wlist,
-        "cumulative_rent_usd": round(float(stats.get("cumulative_usd", 0.0)), 4),
+        "cumulative_rent_usd": rent_usd,
         "current_hourly_usd": round(float(stats.get("current_hourly_usd", 0.0)), 4),
-        "coins_pending": round(pending, 4),
-        "coins_recent_settled": round(recent, 4),
+        "coin_price_usd": cp,
+        "cumulative_output": output,
+        "cumulative_output_usd": output_usd,
+        "cumulative_profit_usd": round(output_usd - rent_usd, 2),
+        "stats_since": int(float(stats.get("reset_epoch") or stats.get("last_epoch") or 0)),
         "pool_error": pool.get("_error") if isinstance(pool, dict) else None,
         "ts": int(time.time()),
     }
@@ -668,21 +767,37 @@ def build_config():
 def gpu_rows(sub):
     th = sub.get("thresholds") or {}
     mh = sub.get("min_hashrate_th") or {}
-    names = []
+    # 按"去掉冗余 GeForce 前缀"后的短名归一去重: 即使某型号只有全称 key
+    # (如 NVIDIA GeForce RTX 5090) 也能展示, 保存时不会被空表覆盖丢失(P1-A)。
+    rows = {}
     for k in list(th) + list(mh):
-        if "GeForce" in k or k in names:
-            continue
-        names.append(k)
-    return [{"gpu": n, "max_price": th.get(n), "min_hashrate": mh.get(n)} for n in names]
+        short = k.replace("NVIDIA GeForce ", "").strip()
+        norm = short.upper()
+        r = rows.setdefault(norm, {"gpu": short, "max_price": None, "min_hashrate": None})
+        if "GeForce" not in k:
+            r["gpu"] = short  # 展示优先用不带 GeForce 的短名
+        if r["max_price"] is None and th.get(k) is not None:
+            r["max_price"] = th.get(k)
+        if r["min_hashrate"] is None and mh.get(k) is not None:
+            r["min_hashrate"] = mh.get(k)
+    return list(rows.values())
 
 def build_full_config():
     env = read_env()
-    base = read_config(list_accounts()[0]) if list_accounts() else {}
+    accts = list_accounts()
+    all_cfgs = {acct: read_config(acct) for acct in accts}
+    base = all_cfgs[accts[0]] if accts else {}
     common = {k: base.get(k) for k in COMMON_KEYS}
+    # P2-E: 各账号 common 字段是否有分歧(供前端提示 + 保存覆盖确认)
+    common_diff = {}
+    for k in COMMON_KEYS:
+        vals = {acct: all_cfgs[acct].get(k) for acct in accts}
+        if len({json.dumps(v, ensure_ascii=False, sort_keys=True) for v in vals.values()}) > 1:
+            common_diff[k] = vals
     plats = {}
-    for acct in list_accounts():
+    for acct in accts:
         plat = platform_of(acct)
-        cfg = read_config(acct)
+        cfg = all_cfgs[acct]
         sub = cfg.get(plat, {}) or {}
         kn = key_var_for(acct)
         v = env.get(kn, "")
@@ -706,7 +821,7 @@ def build_full_config():
             "rent_paused": rent_paused(acct),
             "raw": json.dumps(cfg, ensure_ascii=False, indent=2),
         }
-    return {"common": common, "platforms": plats}
+    return {"common": common, "common_diff": common_diff, "platforms": plats}
 
 def backup_and_write(path, obj):
     try:
@@ -840,18 +955,22 @@ def do_terminate(acct, mid, group=None):
 def _secret():
     return hashlib.sha256(("pearl-dash::" + str(CONF.get("password", ""))).encode()).digest()
 
-def new_session():
+def new_session(role="admin"):
     exp = str(int(time.time() + SESS_TTL))
-    sig = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-    return f"{exp}.{sig}"
+    payload = f"{role}.{exp}"
+    sig = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
 
-def valid_session(token):
+def session_role(token):
+    """返回 'admin' / 'guest'(访客);无效或过期返回 None。"""
     try:
-        exp, sig = str(token).split(".", 1)
-        good = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and time.time() < float(exp)
+        role, exp, sig = str(token).split(".", 2)
+        good = hmac.new(_secret(), f"{role}.{exp}".encode(), hashlib.sha256).hexdigest()
+        if role in ("admin", "guest") and hmac.compare_digest(sig, good) and time.time() < float(exp):
+            return role
     except Exception:
-        return False
+        pass
+    return None
 
 class H(BaseHTTPRequestHandler):
     server_version = "pearl-dash"
@@ -867,8 +986,11 @@ class H(BaseHTTPRequestHandler):
                 return part.split("=", 1)[1]
         return ""
 
+    def _role(self):
+        return session_role(self._cookie_token())
+
     def _authed(self):
-        return valid_session(self._cookie_token())
+        return self._role() is not None
 
     def _send(self, code, body, ctype="application/json", extra=None):
         if isinstance(body, (dict, list)):
@@ -895,12 +1017,18 @@ class H(BaseHTTPRequestHandler):
         if path == "/":
             return self._send(200, HTML, "text/html")
         if path.startswith("/api/"):
-            if not self._authed():
+            role = self._role()
+            if not role:
                 return self._send(401, {"error": "unauthorized"})
+            if path == "/api/me":
+                return self._send(200, {"role": role, "user": "admin" if role == "admin" else "访客"})
             if path == "/api/summary":
                 return self._send(200, build_summary())
             if path == "/api/rentals":
                 return self._send(200, build_rentals())
+            # ↓ 以下仅管理员;访客(guest)只能看总览数据与工具链接
+            if role != "admin":
+                return self._send(403, {"error": "forbidden"})
             if path == "/api/config":
                 return self._send(200, build_config())
             if path == "/api/full-config":
@@ -918,14 +1046,22 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         data = self._body_json()
         if path == "/login":
+            if data.get("guest"):
+                tok = new_session("guest")
+                return self._send(200, {"ok": True, "role": "guest"}, extra={
+                    "Set-Cookie": f"sniper_session={tok}; Path=/; Max-Age={SESS_TTL}; HttpOnly; SameSite=Lax"})
             ok = hmac.compare_digest(str(data.get("password", "")), str(CONF.get("password", "")))
             if not ok:
                 return self._send(401, {"error": "密码错误"})
-            tok = new_session()
-            return self._send(200, {"ok": True}, extra={
+            tok = new_session("admin")
+            return self._send(200, {"ok": True, "role": "admin"}, extra={
                 "Set-Cookie": f"sniper_session={tok}; Path=/; Max-Age={SESS_TTL}; HttpOnly; SameSite=Lax"})
-        if not self._authed():
-            return self._send(401, {"error": "unauthorized"})
+        if path == "/logout":
+            return self._send(200, {"ok": True}, extra={
+                "Set-Cookie": "sniper_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+        # 以下写操作仅管理员;访客一律拒绝
+        if self._role() != "admin":
+            return self._send(401 if not self._authed() else 403, {"error": "forbidden"})
         if path == "/api/key":
             plat = str(data.get("platform", ""))
             value = str(data.get("value", "")).strip()
@@ -953,12 +1089,18 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, restart_platform(str(data.get("platform", ""))))
         if path == "/api/dashboard-password":
             return self._send(200, set_dashboard_password(data.get("password", "")))
+        if path == "/api/coin-price":
+            return self._send(200, set_coin_price(data.get("price")))
+        if path == "/api/reset-stats":
+            return self._send(200, reset_stats())
         return self._send(404, {"error": "not found"})
 
 
 HTML = r"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>今晚挖珍珠 // PEARL_SNIPER</title>
+<title>今晚挖珍珠 · Pearl Sniper</title>
+<meta name=theme-color content="#0a0e17">
+<link rel="icon" href="data:image/svg+xml,<svg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'><defs><radialGradient%20id='g'%20cx='37%25'%20cy='31%25'%20r='78%25'><stop%20offset='0%25'%20stop-color='%23f2fffc'/><stop%20offset='17%25'%20stop-color='%238ff3e6'/><stop%20offset='42%25'%20stop-color='%233fe0c5'/><stop%20offset='71%25'%20stop-color='%231aa6cf'/><stop%20offset='100%25'%20stop-color='%23083f57'/></radialGradient><radialGradient%20id='h'%20cx='50%25'%20cy='50%25'%20r='50%25'><stop%20offset='0%25'%20stop-color='%233fe0c5'%20stop-opacity='0.55'/><stop%20offset='100%25'%20stop-color='%233fe0c5'%20stop-opacity='0'/></radialGradient></defs><rect%20width='64'%20height='64'%20rx='15'%20fill='%230a0e17'/><circle%20cx='32'%20cy='32'%20r='27'%20fill='url(%23h)'/><circle%20cx='32'%20cy='32'%20r='17'%20fill='url(%23g)'/><ellipse%20cx='25.5'%20cy='24'%20rx='6.5'%20ry='4.6'%20fill='%23ffffff'%20opacity='0.92'/></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap');
 :root{--bg:#0a0e17;--bg2:#0f1623;--card:#141b2b;--card2:#172033;--bd:#23304a;--bd2:#33415f;
@@ -1019,9 +1161,14 @@ tr:last-child td{border-bottom:none}td{font-size:12.5px}
 .bal-edit .bb.x{color:var(--mut)}
 .bal-edit .bb.x:hover{color:var(--hi);background:rgba(255,255,255,.07)}
 .req{color:var(--bad);font-size:10px;border:1px solid rgba(255,122,122,.4);background:var(--badbg);border-radius:5px;padding:1px 6px;letter-spacing:.5px}
+.cdiff{color:var(--warn);font-size:10px;border:1px solid rgba(255,178,89,.4);background:var(--warnbg);border-radius:5px;padding:1px 6px;cursor:help}
 button{font-family:inherit;border:1px solid var(--bd2);background:rgba(255,255,255,.04);color:var(--tx);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;transition:.14s}
 button:hover{border-color:var(--g2);color:var(--hi);background:rgba(63,224,197,.06)}
 .b-acc{background:linear-gradient(92deg,var(--g1),var(--g2));color:#06121a;border-color:transparent;box-shadow:0 6px 18px -8px rgba(63,224,197,.55)}.b-acc:hover{color:#06121a;filter:brightness(1.06)}
+.peek{margin-top:13px;text-align:center;color:var(--mut);font-size:11.5px;letter-spacing:.4px;font-family:var(--mono);cursor:pointer;padding:8px;border-top:1px solid var(--bd);transition:.14s}
+.peek:hover{color:var(--acc)}
+.logout{margin-top:9px;color:var(--mut);font-size:11px;font-family:var(--mono);cursor:pointer;letter-spacing:.4px;display:inline-flex;align-items:center;gap:5px;transition:.14s}
+.logout:hover{color:var(--bad)}
 .b-warn{background:var(--warnbg);color:var(--warn);border-color:rgba(255,178,89,.4)}.b-warn:hover{color:var(--warn);border-color:var(--warn)}
 .b-bad{background:var(--badbg);color:var(--bad);border-color:rgba(255,122,122,.35);padding:6px 12px;font-size:11.5px}.b-bad:hover{color:var(--bad);border-color:var(--bad)}
 input,textarea{background:#0c1320;border:1px solid var(--bd2);color:var(--hi);border-radius:9px;padding:9px 11px;font-size:12px;font-family:inherit;width:100%;outline:none;transition:.14s}
@@ -1047,8 +1194,17 @@ summary:hover{color:var(--acc)}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .app{display:flex;min-height:100vh}
 .side{width:210px;flex-shrink:0;background:rgba(15,22,35,.55);border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
-.sbrand{font-weight:800;font-size:15px;line-height:1.3;margin-bottom:24px;background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.sbrand span{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);-webkit-text-fill-color:var(--mut);font-weight:600;margin-top:4px;font-family:var(--mono)}
+.sbrand{display:flex;align-items:center;gap:11px;margin-bottom:24px}
+.sbrand .bt{font-weight:800;font-size:15.5px;line-height:1.2;color:var(--hi)}
+.sbrand .bt small{display:block;font-size:9.5px;letter-spacing:1.8px;color:var(--mut);font-weight:600;margin-top:4px;font-family:var(--mono)}
+.pg{background:linear-gradient(92deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;font-style:normal}
+.orb{position:relative;border-radius:50%;flex-shrink:0;
+background:radial-gradient(circle at 37% 31%,#f2fffc 0%,#8ff3e6 17%,#3fe0c5 42%,#1aa6cf 71%,#083f57 100%);
+box-shadow:0 0 0 1px rgba(143,243,230,.22),0 0 12px 1px rgba(63,224,197,.55),0 0 26px 5px rgba(63,224,197,.22),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.3);
+animation:orbglow 3.4s ease-in-out infinite}
+.orb::after{content:"";position:absolute;top:13%;left:19%;width:36%;height:28%;border-radius:50%;
+background:radial-gradient(circle,rgba(255,255,255,.95),rgba(255,255,255,0) 70%)}
+@keyframes orbglow{0%,100%{box-shadow:0 0 0 1px rgba(143,243,230,.22),0 0 12px 1px rgba(63,224,197,.5),0 0 24px 4px rgba(63,224,197,.18),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.3)}50%{box-shadow:0 0 0 1px rgba(143,243,230,.3),0 0 16px 2px rgba(63,224,197,.7),0 0 34px 7px rgba(63,224,197,.3),inset -3px -4px 9px rgba(2,26,38,.7),inset 2px 2px 7px rgba(255,255,255,.34)}}
 .nav{display:flex;flex-direction:column;gap:2px}
 .ni{padding:9px 13px;border-radius:9px;cursor:pointer;color:var(--mut);font-weight:600;font-size:13px;letter-spacing:.3px;transition:.14s}
 .ni:hover{color:var(--hi);background:rgba(255,255,255,.04)}
@@ -1075,31 +1231,40 @@ main{flex:1;min-width:0;padding:26px 32px;display:flex;justify-content:center}
 select{background:#0c1320;border:1px solid var(--bd2);color:var(--tx);border-radius:9px;padding:7px 9px;font-family:inherit;font-size:12px;cursor:pointer}
 </style></head><body>
 <div id=login style=display:none><div class=box>
-<div class=logo>// PEARL_SNIPER v1</div>
-<h2>今晚挖珍珠</h2><div class=sub>PEARL SNIPER DASHBOARD</div>
+<div style="display:flex;align-items:center;gap:18px;margin-bottom:14px">
+<span class=orb style="width:42px;height:42px"></span>
+<div><div class=logo>// PEARL_SNIPER v1</div><h2 style="margin:2px 0 0">今晚挖<i class=pg>珍珠</i></h2></div></div>
+<div class=sub>PEARL SNIPER DASHBOARD</div>
 <input id=pw type=password placeholder="ACCESS PASSWORD" onkeydown="if(event.key=='Enter')login()">
 <div class=err id=lerr></div>
-<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button></div></div>
+<button class=b-acc style="width:100%;margin-top:14px" onclick=login()>登录 / LOGIN</button>
+<div class=peek onclick=guestLogin()>👁 偷窥模式 · 仅看总览 / PEEK MODE</div></div></div>
 
 <div class=app>
 <aside class=side>
-<div class=sbrand>🦪 今晚挖珍珠<span>PEARL SNIPER v1</span></div>
+<div class=sbrand><span class=orb style="width:26px;height:26px"></span><span class=bt>今晚挖<i class=pg>珍珠</i><small>PEARL SNIPER v1</small></span></div>
 <nav class=nav>
 <div class="ni on" data-nav=ov onclick="nav('ov')">总览</div>
 <div class="ni" data-nav=lk onclick="nav('lk')">工具链接</div>
-<div class=nigrp>配置</div>
-<div class="ni sub" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
+<div class="nigrp adm">配置</div>
+<div class="ni sub adm" data-nav=cf:common onclick="nav('cf:common')">公共配置</div>
 <div id=cfaccts></div>
 </nav>
-<div class=sfoot><div class=suser><span class=dot></span>admin</div><div id=clock></div></div>
+<div class=sfoot><div class=suser><span class=dot></span><span id=uname>admin</span></div><div id=clock></div>
+<div class=logout onclick=logout()>⏏ 退出登录</div></div>
 </aside>
 <main><div class=inner><div id=ov></div><div id=lk style=display:none></div><div id=cf style=display:none></div></div></main>
 </div>
 <div class=toast id=toast></div>
 
 <script>
-let view='ov',subtab='common';
+let view='ov',subtab='common',ROLE='admin';
 let EDITING=null,BALVAL={};   // 总览余额内联编辑: 正在编辑的账号 / 各账号手填余额预填值
+function applyRole(){let adm=ROLE=='admin';
+document.querySelectorAll('.adm').forEach(e=>e.style.display=adm?'':'none');
+let u=document.getElementById('uname');if(u)u.textContent=adm?'admin':'访客 GUEST';
+let dot=document.querySelector('.suser .dot');if(dot)dot.style.background=adm?'var(--g2)':'var(--warn)';
+if(!adm&&view=='cf'){nav('ov');}}
 function toast(m){let t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',2600);}
 function nav(t){if(t=='ov'){view='ov';}else if(t=='lk'){view='lk';}else{view='cf';subtab=t.split(':')[1];}
 document.querySelectorAll('.ni').forEach(e=>e.classList.toggle('on',e.dataset.nav==t));
@@ -1108,24 +1273,33 @@ document.getElementById('lk').style.display=view=='lk'?'':'none';
 document.getElementById('cf').style.display=view=='cf'?'':'none';refresh();}
 function copyAddr(a){(navigator.clipboard?navigator.clipboard.writeText(a):Promise.reject()).then(()=>toast('钱包地址已复制')).catch(()=>toast('复制失败, 请手动选中'));}
 async function api(p,opt){const r=await fetch(p,opt);if(r.status==401){document.getElementById('login').style.display='flex';throw 'auth';}document.getElementById('login').style.display='none';return r.json();}
+function afterAuth(role){ROLE=role||'admin';document.getElementById('login').style.display='none';if(ROLE!='admin'&&view=='cf')view='ov';applyRole();refresh();}
 async function login(){const pw=document.getElementById('pw').value;
 const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-if(r.ok){document.getElementById('login').style.display='none';refresh();}else{const d=await r.json();document.getElementById('lerr').textContent=d.error||'登录失败';}}
+if(r.ok){const d=await r.json();afterAuth(d.role);}else{const d=await r.json();document.getElementById('lerr').textContent=d.error||'登录失败';}}
+async function guestLogin(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guest:true})});
+if(r.ok){const d=await r.json();afterAuth(d.role||'guest');}}
+async function logout(){try{await fetch('/logout',{method:'POST'});}catch(e){}location.reload();}
+async function initRole(){try{const m=await fetch('/api/me');if(m.ok){const d=await m.json();ROLE=d.role;applyRole();}}catch(e){}}
 function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+'h'+m+'m';}
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
+async function saveCoinPrice(){let v=parseFloat(document.getElementById('cpin').value);if(isNaN(v)||v<0){toast('币价无效');return;}try{let r=await api('/api/coin-price',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:v})});if(r&&r.ok){toast('币价已更新 $'+v);refresh();}else toast((r&&r.error)||'保存失败');}catch(e){}}
+async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
 async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
+let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const aid of Object.keys(r)){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
 let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
 let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
-let rows=(v.machines||[]).map(m=>{let a=m.id?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+let rows=(v.machines||[]).map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
 return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
@@ -1140,10 +1314,16 @@ document.getElementById('ov').innerHTML=`
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
-<div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自看板起算</div></div>
-<div class=card><div class=k>待结算 pearl</div><div class=v style=color:var(--acc)>${fnum(d.coins_pending,4)}</div></div>
-<div class=card><div class=k>近期已结算 pearl</div><div class=v>${fnum(d.coins_recent_settled,4)}</div></div>
-</div>${pe}
+<div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自重置起算</div></div>
+<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · 自重置起算 @ $${fnum(d.coin_price_usd,2)}/币</div></div>
+<div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>产出折合 − 累计租金</div></div>
+</div>
+${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+<label class=muted style="font-size:12px">币价 $<input id=cpin type=number step=0.01 min=0 value="${d.coin_price_usd}" style="width:78px;margin-left:4px;background:#0e1422;border:1px solid #243049;color:#e7eef9;border-radius:7px;padding:4px 7px"></label>
+<button class=b-mini onclick="saveCoinPrice()">保存币价</button>
+<button class=b-bad onclick="resetStats()">重置统计</button>
+${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:''}
+</div>`:''}${pe}
 <div class=sec><div class=lbl>矿池在挖 WORKER</div><table><tr><th>Worker</th><th>GPU</th><th>算力</th><th>IP</th></tr>${wk}</table></div>
 <div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;}
 
@@ -1152,10 +1332,13 @@ async function renderConfigTab(){let d;try{d=await api('/api/full-config')}catch
 let nv=Object.keys(d.platforms).map(a=>`<div class="ni sub${subtab==a?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc(d.platforms[a].label||a)}</div>`).join('');
 let ce=document.getElementById('cfaccts');if(ce)ce.innerHTML=nv;
 document.getElementById('cf').innerHTML=subtab=='common'?commonHtml(d):platformHtml(d.platforms[subtab],subtab);}
-function commonHtml(d){let c=d.common;
-let cf=(k,label,req,ph)=>`<div class=fld>${label}${req?' <span class=req>必填</span>':''}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;
+function commonHtml(d){let c=d.common;let diff=d.common_diff||{};
+let cf=(k,label,req,ph)=>{let w='';
+if(diff[k]){let dv=Object.entries(diff[k]).map(([p,v])=>p+'='+(v==null||v===''?'∅':v)).join('   |   ');
+w=` <span class=cdiff title="${esc(dv)}">⚠ 各平台当前不一致, 保存将统一覆盖</span>`;}
+return `<div class=fld>${label}${req?' <span class=req>必填</span>':''}${w}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;};
 return `<div class=lbl>公共配置 · COMMON</div>
-<div class=platbox><div class=top><b>COMMON</b><span class=muted>改这里会写入全部 4 个 config</span></div>
+<div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
 ${cf('prl_host','矿池 prl_host',0,'84.32.220.219:9000')}
@@ -1243,6 +1426,13 @@ let r=await api('/api/save-platform',{method:'POST',headers:{'Content-Type':'app
 toast(r.error?('保存失败: '+r.error):p+' 配置已保存, 点重启生效');}
 async function saveCommon(){let data={};['prl_address','prl_host','worker_prefix','image','alert_url'].forEach(k=>{let el=document.getElementById('cm_'+k);if(el)data[k]=el.value.trim();});
 ['max_active_instances','max_total_hourly_usd'].forEach(k=>{let n=parseFloat(document.getElementById('cm_'+k).value);if(!isNaN(n))data[k]=n;});
+// P2-E: 若有字段当前各平台不一致, 覆盖前确认
+let diff=(CFG&&CFG.common_diff)||{};let clash=Object.keys(data).filter(k=>diff[k]);
+if(clash.length){let detail=clash.map(k=>{
+let perp=Object.entries(diff[k]).map(([p,v])=>'    '+p+': '+(v==null||v===''?'(空)':v)).join('\n');
+let nv=(data[k]===''||data[k]==null)?'(空)':data[k];
+return '• '+k+'  → 4 平台统一为: '+nv+'\n'+perp;}).join('\n\n');
+if(!confirm('以下字段当前各平台不一致，保存公共配置会把 4 个平台覆盖成同一值:\n\n'+detail+'\n\n确定覆盖？')) return;}
 let r=await api('/api/save-common',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:data})});
 toast(r.error?('失败: '+r.error):'公共配置已写入全部 config, 各平台点重启生效');}
 async function saveRaw(p){let raw=document.getElementById('raw_'+p).value;
@@ -1268,7 +1458,7 @@ const LINKS=[
 {t:'区块浏览器',i:'🔎',items:[['Explorer','https://explorer.pearlresearch.ai/']]},
 {t:'钱包',i:'👛',items:[['Compute Wallet','https://compute.pearlresearch.ai/wallet']]},
 {t:'矿池',i:'⛏️',items:[['PearlHash','http://pearlhash.xyz'],['AlphaPool','https://pearl.alphapool.tech/']]},
-{t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://www.runpod.io/'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
+{t:'租卡平台',i:'🖥️',items:[['Salad','https://portal.salad.com/'],['RunPod','https://runpod.io?ref=9hx2ahkb'],['TensorDock','https://dashboard.tensordock.com/'],['Vast.ai','https://cloud.vast.ai/']]},
 {t:'收益计算器',i:'🧮',items:[['Akakay 计算器','https://pearl.akakay.com/'],['Pearl Dashboard','https://pearl-dashboard-pearl.vercel.app/']]},
 ];
 function dom(u){try{return new URL(u).host}catch(e){return u}}
@@ -1277,7 +1467,7 @@ c.items.map(it=>`<a class=linkitem href="${esc(it[1])}" target=_blank rel=noopen
 document.getElementById('lk').innerHTML=`<div class=lbl>工具链接 · TOOLS</div><div class=lgrid>${cards}</div>`;}
 function refresh(){if(view=='ov')renderOverview();else if(view=='lk')renderLinks();else renderConfigTab();}
 setInterval(()=>{let c=document.getElementById('clock');if(c)c.textContent=new Date().toLocaleTimeString();},1000);
-setInterval(()=>{if(view=='ov')renderOverview();},10000);refresh();
+setInterval(()=>{if(view=='ov')renderOverview();},10000);initRole();refresh();
 </script></body></html>"""
 
 

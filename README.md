@@ -33,12 +33,19 @@ for p in vast runpod tensordock salad; do cp configs/config.$p.example.json conf
 #    ② 所有 config.*.json 的 prl_address 改成【你自己的 $pearl 钱包】
 
 # 3. 一条命令起全部(4 平台 live 抢卡 + 网页看板)
+#    Linux / macOS:
 bash scripts/start-all.sh
+#    Windows(PowerShell):
+powershell -ExecutionPolicy Bypass -File scripts\start-all.ps1
 
 # 一条命令停全部
+#    Linux / macOS:
 bash scripts/stop-all.sh
+#    Windows(PowerShell):
+powershell -ExecutionPolicy Bypass -File scripts\stop-all.ps1
 
-# 4. 浏览器访问  http://<服务器IP>:8787   登录 admin / 你设的 DASHBOARD_PASSWORD
+# 4. 浏览器访问  http://<服务器IP>:8787 (Windows 本机用 http://localhost:8787)
+#    登录 admin / 你设的 DASHBOARD_PASSWORD
 ```
 
 > 钱包、key、密码、GPU 门槛等都能在看板**配置页**里改;改完点「重启应用」生效。

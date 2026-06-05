@@ -22,3 +22,6 @@ __pycache__/
 
 # 文档全部本地保留, 不随仓库分发
 docs/
+
+# 看板运行日志
+dashboard.out

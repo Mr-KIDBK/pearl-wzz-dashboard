@@ -130,8 +130,28 @@ def normalize_gpu(name):
         return "RTX 3080 Ti"
     if "3080" in compact:
         return "RTX 3080"
+    if "5080" in compact:
+        return "RTX 5080"
+    if "5070TI" in compact:
+        return "RTX 5070 Ti"
+    if "5070" in compact:
+        return "RTX 5070"
     if "5060TI" in compact:
         return "RTX 5060 Ti"
+    if "4080SUPER" in compact:
+        return "RTX 4080 Super"
+    if "4080" in compact:
+        return "RTX 4080"
+    if "4070TISUPER" in compact:
+        return "RTX 4070 Ti Super"
+    if "4070TI" in compact:
+        return "RTX 4070 Ti"
+    if "4070" in compact:
+        return "RTX 4070"
+    if "4060TI" in compact:
+        return "RTX 4060 Ti"
+    if "4060" in compact:
+        return "RTX 4060"
     for token in ("RTX 5090", "RTX 4090", "RTX 3090 TI", "RTX 3090", "RTX 3080 TI", "RTX 3080", "RTX 5060 TI"):
         if token in text:
             return token.title().replace("Ti", "Ti").replace("Rtx", "RTX")
@@ -2218,6 +2238,32 @@ def run_salad_cycle(config, state, live):
             worker_hashrates = pearl_worker_hashrates(config)
         except Exception as exc:
             log(f"Salad PearlHash worker check failed: {type(exc).__name__}: {exc}")
+    # 按型号判健康: 从矿池按 machine_id 解析每台真实 GPU, 取该型号的 min_hashrate_th 门槛
+    per_model = bool(cfg.get("per_model_threshold_enabled", True))
+    _pool_cache = {"workers": worker_hashrates if worker_hashrates else None}
+    def _pool_workers():
+        if _pool_cache["workers"] is None:
+            try:
+                _pool_cache["workers"] = pearl_worker_hashrates(config)
+            except Exception as exc:
+                log(f"Salad pool lookup failed: {type(exc).__name__}: {exc}")
+                _pool_cache["workers"] = {}
+        return _pool_cache["workers"] or {}
+    def pool_info_by_machine(mid):
+        # salad worker 名 = <prefix>-salad-<machine_id>; 返回 (gpu_name, hashrate_th 或 None)。
+        # 矿池只列在线 worker → 查不到=该机当前不在矿池(可能离线/未挖)。
+        if not mid:
+            return "", None
+        for wname, winfo in _pool_workers().items():
+            if str(mid) in str(wname):
+                gi = (winfo or {}).get("gpu_info") or []
+                gpu = str((gi[0] if gi else {}).get("name") or "").replace("NVIDIA GeForce ", "").strip()
+                return gpu, float((winfo or {}).get("hashrate_th") or 0)
+        return "", None
+    def pool_gpu_by_machine(mid):
+        if not mid or not per_model:
+            return ""
+        return pool_info_by_machine(mid)[0]
     alphapool_workers = None
     alphapool_worker_api_failed = False
     for name, group in groups_by_name.items():
@@ -2315,17 +2361,32 @@ def run_salad_cycle(config, state, live):
             if not instance_id:
                 continue
             rate = log_rates.get(instance_id)
-            if not rate:
-                continue
-            hashrate_th = float(rate.get("hashrate_th") or 0)
             inst_key = f"{name}:{instance_id}"
             inst_entry = instance_watch.setdefault(inst_key, {})
+            machine_id = (rate or {}).get("machine_id") or instance.get("machine_id")
+            if rate:
+                hashrate_th = float(rate.get("hashrate_th") or 0)
+                log_gpu = rate.get("gpu_name") or ""
+                inst_entry["last_hashrate_source"] = "salad_log"
+            else:
+                # P1-B: running 实例但本轮无算力日志 → 先用矿池兜底; 矿池也查不到则按 0 算力。
+                # 否则坏/不出日志的实例会永远逃过回收。low_efficiency_stop_seconds 仍提供防抖,
+                # 单轮日志抽风不会立刻踢(需持续低于门槛满 stop_seconds)。
+                if not bool(cfg.get("treat_missing_log_as_zero", True)):
+                    continue
+                pgpu, phr = pool_info_by_machine(machine_id)
+                log_gpu = pgpu or ""
+                if phr is not None:
+                    hashrate_th = float(phr)
+                    inst_entry["last_hashrate_source"] = "pool_fallback"
+                else:
+                    hashrate_th = 0.0
+                    inst_entry["last_hashrate_source"] = "missing_log_zero"
             inst_entry["last_check_epoch"] = now_ts
             inst_entry["last_hashrate_th"] = round(hashrate_th, 3)
             inst_entry["group"] = name
             inst_entry["instance_id"] = instance_id
-            inst_entry["machine_id"] = rate.get("machine_id") or instance.get("machine_id")
-            log_gpu = rate.get("gpu_name") or ""
+            inst_entry["machine_id"] = machine_id
             image_name = str(((group.get("container") or {}).get("image") or ""))
             is_alphapool_group = "alphaminetech/pearl-miner" in image_name or object_contains_text(group, "alphaminetech/pearl-miner")
             alpha_monitor_gpus = set(str(x).upper() for x in cfg.get("alphapool_monitor_gpu_names", []))
@@ -2335,7 +2396,17 @@ def run_salad_cycle(config, state, live):
                     continue
                 min_hash = float(cfg.get("alphapool_min_hashrate_th", cfg.get("min_hashrate_th", {}).get(log_gpu or "RTX 5070", min_hash)))
                 gpu = log_gpu or "RTX 5070"
-            inst_entry["gpu"] = log_gpu or gpu
+            elif per_model:
+                # 按 machine_id 解析真实型号, 取该型号门槛; 取不到型号或型号未配则保持组级 default
+                eff_gpu = pool_gpu_by_machine(inst_entry.get("machine_id")) or log_gpu or gpu
+                if eff_gpu:
+                    pmh = gpu_map_value(eff_gpu, cfg.get("min_hashrate_th", {}), None)
+                    if pmh is not None:
+                        min_hash = float(pmh)
+                        inst_entry["min_hash_source"] = "per_model"
+                    gpu = eff_gpu
+            inst_entry["gpu"] = gpu or log_gpu
+            inst_entry["min_hash_applied"] = float(min_hash) if min_hash is not None else None
             inst_entry["mixed_group"] = mixed_group
             if hashrate_th >= float(min_hash):
                 inst_entry.pop("low_since_epoch", None)
