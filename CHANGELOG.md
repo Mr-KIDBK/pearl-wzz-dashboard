@@ -2,6 +2,20 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [行情图表 + 实时币价] — 2026-06-05
+
+### Added
+- **PRL/USDT K 线图面板**:总览页币价行下方可折叠行情面板(默认收起,点标题展开)。
+  - 纯 Canvas 绘制(无外部库):Candlestick(绿涨/红跌)+ **EMA20(金)/EMA60(紫)** + 价格 Y 轴 + 时间 X 轴。
+  - 底部独立 Canvas 成交量柱状图(颜色跟涨跌联动)。
+  - 周期切换:**15m / 1h / 4h / 1d**;头部实时显示区间涨跌幅。
+  - hover crosshair **OHLCV tooltip**。
+  - `renderOverview` 每 10s 刷新后保持展开状态并自动重绘。
+- **实时 PRL/USDT 币价**:自动从 SafeTrade REST API 拉取(`ticker.last`),后台每 30s 刷新;API 失败 fallback 到缓存旧值。看板显示「**● 实时**」标志,无需手动填写。移除了原手动「币价」输入框与「保存币价」按钮。
+- 后端 `/api/kline?period=` 代理端点:serve-stale 缓存(各周期独立 TTL),API 失败返回旧缓存/空列表。
+
+---
+
 ## [多账号支持] — 2026-06-05
 
 将单账号架构升级为「多平台 × 多账号」,并修复了一批 dashboard 显示缺陷。`sniper.py` 监控/抢卡核心**未改动**,改动集中在启动脚本、dashboard 与配置组织。
