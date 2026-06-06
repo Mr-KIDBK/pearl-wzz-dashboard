@@ -2679,6 +2679,22 @@ def run_provider_loop(config, state, live):
             time.sleep(0.2)
 
 
+def reset_low_eff_timers(state):
+    """启动时清空在租机器的低效/零算力计时器, 让每台重新获得完整观测窗口。
+    避免重启后继承重启前(可能基于错误读数)的旧计时器导致一启动就误杀。
+    保留 host_switched_epoch 等其它状态。返回被清掉计时器的机器数。"""
+    cleared = 0
+    for r in state.get("rented", []):
+        if not r.get("active", True):
+            continue
+        if r.get("low_efficiency_since_epoch") is not None:
+            cleared += 1
+        r.pop("low_efficiency_since_epoch", None)
+        r.pop("low_efficiency_reason", None)
+        r.pop("zero_since_epoch", None)
+    return cleared
+
+
 def main():
     parser = argparse.ArgumentParser(description="Vast/RunPod low-price GPU sniper for pearl-miner.")
     parser.add_argument("--config", default=str(ROOT / "config.local.json"))
@@ -2691,8 +2707,11 @@ def main():
     if config is None:
         raise SystemExit(f"Config not found: {config_path}")
     state = load_json(STATE_PATH, {"seen": {}, "rented": []})
+    reset_n = reset_low_eff_timers(state)  # 重启后重置观测窗口, 避免继承旧计时器一启动就误杀
     mode = "LIVE" if args.live else "DRY-RUN"
     log(f"Starting sniper mode={mode} config={config_path}")
+    if reset_n:
+        log(f"Reset low-efficiency timers for {reset_n} active rental(s) on startup (fresh observation window)")
     if not args.once:
         intervals = provider_intervals(config)
         log(f"Concurrent provider scanner enabled: vast={intervals['vast']}s tensordock={intervals['tensordock']}s runpod={intervals['runpod']}s")
