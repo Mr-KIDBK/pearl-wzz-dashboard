@@ -2684,6 +2684,7 @@ def reset_low_eff_timers(state):
     避免重启后继承重启前(可能基于错误读数)的旧计时器导致一启动就误杀。
     保留 host_switched_epoch 等其它状态。返回被清掉计时器的机器数。"""
     cleared = 0
+    # runpod / vast: rented 里的低效计时
     for r in state.get("rented", []):
         if not r.get("active", True):
             continue
@@ -2692,6 +2693,16 @@ def reset_low_eff_timers(state):
         r.pop("low_efficiency_since_epoch", None)
         r.pop("low_efficiency_reason", None)
         r.pop("zero_since_epoch", None)
+    # salad: 组级(salad_watch)+ 逐实例(salad_instance_watch)的低效计时
+    # 保留 last_reallocate_epoch 等(reallocate 冷却状态), 只清观测计时器
+    for watch_key in ("salad_watch", "salad_instance_watch"):
+        for entry in (state.get(watch_key) or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("low_since_epoch") is not None:
+                cleared += 1
+            entry.pop("low_since_epoch", None)
+            entry.pop("low_reason", None)
     return cleared
 
 
