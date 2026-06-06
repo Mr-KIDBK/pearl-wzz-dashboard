@@ -262,6 +262,20 @@ def pearl_worker_hashrates(config):
     return workers
 
 
+def lookup_worker(worker_hashrates, worker_name):
+    """矿池 worker 查找: 先精确匹配, 再前缀匹配(矿机镜像会在 PRL_WORKER 后追加 -hash 后缀)。
+    前缀匹配有歧义(多个候选)时返回 None 避免误判。"""
+    if not worker_name or not worker_hashrates:
+        return None
+    exact = worker_hashrates.get(str(worker_name))
+    if exact is not None:
+        return exact
+    # 前缀匹配: 找所有以 worker_name + '-' 开头的条目
+    prefix = str(worker_name) + "-"
+    matches = [v for k, v in worker_hashrates.items() if k.startswith(prefix)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def alphapool_worker_hashrates(config):
     address = str(config.get("prl_address") or "").strip()
     if not address:
@@ -644,7 +658,7 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     if hashrate_th is None:
         worker = make_worker(config, "vast", rented.get("gpu"), rented.get("external_id"))
         try:
-            info = pearl_worker_hashrates(config).get(worker)
+            info = lookup_worker(pearl_worker_hashrates(config), worker)
         except Exception as exc:
             log(f"Vast PearlHash worker check failed: contract={contract_id} worker={worker} error={type(exc).__name__}: {exc}")
             info = None
@@ -1148,7 +1162,7 @@ def reconcile_runpod_instances(config, state):
                 worker_hashrates = {}
                 worker_api_failed = True
         worker = ((rented.get("result") or {}).get("env") or {}).get("PRL_WORKER") or (pod.get("env") or {}).get("PRL_WORKER") or rented.get("result", {}).get("name") or pod.get("name")
-        info = worker_hashrates.get(str(worker))
+        info = lookup_worker(worker_hashrates, worker)
         if not info:
             rented["last_hashrate_lookup"] = {"worker": worker, "found": False}
             # worker 不在矿池 = 没在挖。仅当本轮矿池查询成功时按 0 算力计, 交低效策略在持续低效 N 秒后回收;
@@ -2561,7 +2575,7 @@ def run_salad_cycle(config, state, live):
         min_hash = gpu_map_value(gpu, cfg.get("min_hashrate_th", {}), cfg.get("default_min_hashrate_th"))
         if min_hash is None:
             continue
-        info = worker_hashrates.get(worker_name)
+        info = lookup_worker(worker_hashrates, worker_name)
         if not info and not bool(cfg.get("missing_worker_as_zero", True)):
             continue
         hashrate_th = float((info or {}).get("hashrate_th") or 0)
