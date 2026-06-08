@@ -496,6 +496,7 @@ def _salad_compute(account_id):
             d = salad_get(pre, key)
             names = [g.get("name") for g in (d.get("items") or [])]
         watch = read_state(account_id).get("salad_instance_watch") or {}
+        gpu_cache = salad_gpu_for(account_id)  # portal gpu_class: {instance_id: gpu_class}(优先源)
         # 矿池侧: salad worker 名 = <prefix>-salad-<machine_id>, gpu_info 带真实卡型
         pool = pool_data()
         pool_workers = (pool.get("connected_workers") or []) if isinstance(pool, dict) else []
@@ -564,7 +565,8 @@ def _salad_compute(account_id):
                 mid = str(inst.get("machine_id") or "")
                 w = watch.get(f"{nm}:{iid}") or {}
                 pw = pool_match(mid) or pool_worker(nm)
-                gpu = pgpu(pw) or (w.get("gpu") or "").strip() or "?"
+                gc = str(gpu_cache.get(iid) or "").replace("NVIDIA GeForce ", "").strip()
+                gpu = gc or pgpu(pw) or (w.get("gpu") or "").strip() or "?"
                 hr = w.get("last_hashrate_th")
                 if hr is None:
                     hr = phr(pw)
