@@ -1651,7 +1651,7 @@ return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
-<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select> <button class=b-warn onclick="migrateAcct('${esc(p)}')">⇄ 迁移现有机器到所选池</button></div>
+<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${esc(p)}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select> <button class=b-warn onclick="migrateAcct('${esc(p)}')">⇄ 迁移现有机器到所选池</button></div>
 </div>
 <div class=lbl style=margin-top:14px>GPU 型号 · 最高 $/h · 最低 TH/s</div>
 <div class=gpurow style=color:var(--mut);font-size:11px><div>GPU</div><div>最高 $/h</div><div>最低 TH/s</div><div></div></div>
