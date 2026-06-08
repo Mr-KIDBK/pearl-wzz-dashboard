@@ -956,7 +956,8 @@ def build_full_config():
             "pool": S.active_pool(cfg),
         }
     return {"common": common, "common_diff": common_diff, "platforms": plats,
-            "pools": [{"id": k, "label": v["label"]} for k, v in S.POOLS.items()]}
+            "pools": [{"id": k, "label": v["label"], "image": v["image"], "reads_prl_host": v["reads_prl_host"]}
+                      for k, v in S.POOLS.items()]}
 
 def backup_and_write(path, obj):
     try:
