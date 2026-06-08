@@ -1739,7 +1739,8 @@ if(diff[k]){let dv=Object.entries(diff[k]).map(([p,v])=>p+'='+(v==null||v===''?'
 w=` <span class=cdiff title="${esc(dv)}">⚠ 各平台当前不一致, 保存将统一覆盖</span>`;}
 return `<div class=fld>${label}${req?' <span class=req>必填</span>':''}${w}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;};
 return `<div class=lbl>全局配置 · COMMON</div>
-<div class=row style="margin-bottom:10px"><button class=b-warn onclick="migrateAll()">⇄ 一键全部账号迁移到…</button></div>
+<div class=row style="margin-bottom:10px;gap:8px;align-items:center"><button class=b-warn onclick="migrateAll()">⇄ 一键全部账号迁移到</button>
+<select id=migrateAllPool>${(d.pools||[]).map(o=>`<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('')}</select></div>
 <div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
@@ -1832,9 +1833,9 @@ async function migrateAcct(aid){
 }
 async function migrateAll(){
   let pools=(CFG&&CFG.pools)||[];
-  let target=prompt('全部账号迁移到哪个矿池? 可选: '+pools.map(o=>o.id).join(' / '));
-  if(!target){toast('已取消');return;}
-  if(!pools.some(o=>o.id===target)){toast('未知矿池: '+target);return;}
+  let sel=document.getElementById('migrateAllPool');
+  let target=sel?sel.value:'';
+  if(!target||!pools.some(o=>o.id===target)){toast('请选择目标矿池');return;}
   let cnt=await _countAffected('all');
   if(!await _migrateConfirm('全部账号',target,cnt)){toast('已取消(确认词不符)');return;}
   toast('全部迁移中…(请稍候)');
