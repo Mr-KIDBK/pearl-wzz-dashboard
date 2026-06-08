@@ -42,6 +42,10 @@ ck("hs 转 TH/s: 240e12→240", abs(out["rp1-runpod-x"]["hashrate_th"] - 240) < 
 ck("0 算力 worker 也在", out["rp1-runpod-y"]["hashrate_th"] == 0.0)
 ck("schema 同 pearl(有 hashrate_th)", "hashrate_th" in out["rp1-runpod-x"])
 
+# 边界测试
+ck("空 address 返回 {}", S.twpool_worker_hashrates({"prl_address": ""}) == {})
+ck("config 为 None/空 address 返回 {}", S.twpool_worker_hashrates({}) == {})
+
 urllib.request.urlopen = S_open
 
 if fails:
