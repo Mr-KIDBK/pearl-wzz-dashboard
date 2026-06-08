@@ -327,6 +327,31 @@ def twpool_worker_hashrates(config):
     return out
 
 
+_POOL_HASHRATE_FN = {
+    "pearlhash": pearl_worker_hashrates,
+    "twpool": twpool_worker_hashrates,
+}
+
+def merged_worker_hashrates(config):
+    """按 monitor_pools 查多个池, 按 worker 名合并取 hashrate_th 最大。
+    任一池查询失败只记日志、跳过该池(不影响其它池)。默认 monitor_pools = 全部已注册池。"""
+    pools = (config or {}).get("monitor_pools") or list(POOLS.keys())
+    merged = {}
+    for pool in pools:
+        fn = _POOL_HASHRATE_FN.get(pool)
+        if not fn:
+            continue
+        try:
+            wh = fn(config) or {}
+        except Exception as exc:
+            log(f"pool {pool} hashrate check failed: {type(exc).__name__}: {exc}")
+            continue
+        for w, info in wh.items():
+            cur = merged.get(w)
+            if cur is None or float(info.get("hashrate_th") or 0) > float(cur.get("hashrate_th") or 0):
+                merged[w] = info
+    return merged
+
 
 def compact_location(offer):
     return str(offer.get("geolocation") or offer.get("location") or "").strip()
