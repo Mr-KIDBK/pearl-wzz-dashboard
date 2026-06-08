@@ -269,6 +269,55 @@ def twpool_data(force=False):
     return data
 
 
+def pool_of_image(image):
+    """按镜像判定矿池: twpool 镜像→'twpool'; 其它非空→'pearlhash'; 空→None(交兜底)。"""
+    s = str(image or "").lower()
+    if not s:
+        return None
+    if "twpool" in s or "conishc" in s:
+        return "twpool"
+    return "pearlhash"
+
+
+def _worker_in(pool_workers, worker):
+    """精确或前缀(worker+'-')匹配(矿机会给 worker 追加 -hash 后缀)。"""
+    w = str(worker or "")
+    if not w:
+        return False
+    pre = w + "-"
+    return any(str(n or "") == w or str(n or "").startswith(pre) for n in pool_workers)
+
+
+def pool_of_worker(worker):
+    """兜底: 该 worker 当前在哪个池报算力。twpool reported / pearlhash connected_workers, 前缀匹配。都无→None。"""
+    w = str(worker or "")
+    if not w:
+        return None
+    addr = prl_address() or ""
+    prefix = addr + "."
+    tw = twpool_data()
+    rep = (tw or {}).get("reported") or {} if isinstance(tw, dict) else {}
+    tw_workers = [(k[len(prefix):] if k.startswith(prefix) else k) for k in rep.keys()]
+    if _worker_in(tw_workers, w):
+        return "twpool"
+    ph = pool_data()
+    ph_workers = [x.get("worker_name") for x in (ph.get("connected_workers") or [])] if isinstance(ph, dict) else []
+    if _worker_in(ph_workers, w):
+        return "pearlhash"
+    return None
+
+
+def machine_pool(image, worker):
+    """镜像优先, 无镜像走 worker 兜底, 仍无→'unknown'。"""
+    p = pool_of_image(image)
+    if p:
+        return p
+    p = pool_of_worker(worker)
+    if p:
+        return p
+    return "unknown"
+
+
 # ---------- Salad 实时 ----------
 _salad = {}  # account_id -> {"data", "ts"}
 SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超此值(后台异常)才在请求线程同步兜底重算
