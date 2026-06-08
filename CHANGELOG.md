@@ -2,6 +2,24 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [总览矿池显示切换] — 2026-06-08
+
+总览页加矿池显示切换下拉,迁移期间混合机群可按池查看。纯显示,不影响挖矿/配置/迁移。
+
+### Added — 新增
+- **总览矿池切换下拉**(钱包卡内):`合并 / PearlHash / TW Pool` 三选一,默认**合并**,`localStorage` 记忆(键 `pool_view`)。切换即时重渲染总览。
+- **后端 `twpool_data()`**:查 `api.tw-pool.com/api/worker_stats`,serve-stale 缓存 + 后台 30s 刷新(与 pearlhash `pool_data` 并列)。
+- **`pool_view(which)`**:pearlhash/twpool/merged 三视图统一映射(在挖 worker 表 / 总算力 / 矿池 PRL 余额 / error);合并按 worker 名取最大、总算力与余额相加、单池故障容错。
+- **`/api/summary?pool=`**:按所选池返回 总算力 / worker 表 / 矿池余额 / 累计产出。
+- **产出口径标注**(累计产出卡):PearlHash =「自重置起算(统计自 …)」、TW Pool =「全期(已付+未付)」、合并 =「PearlHash 自重置 + TW Pool 全期」。`tick_output` 始终调用,pearlhash 自重置累加不中断。
+- **矿池余额卡**:显示所选池的 PRL 钱包余额(twpool 直接来自 API;无数据显示 —)。
+
+### Notes — 注意
+- 各账号**平台账单余额**(vast/runpod 充值)不随池切换变;随池变的是**矿池钱包 PRL 余额**。
+- 不影响 PRL/USDT 币价与 K 线行情(与矿池无关)、不影响在跑机器表每实例算力(来自 sniper 双池合并)。
+
+---
+
 ## [多矿池可切换 + 一键迁移] — 2026-06-08
 
 支持 PearlHash / TW Pool 多矿池:双池监控避免混合机群误杀、可配置默认抢哪个池、UI 一键把现有 vast/runpod/salad 机器迁移到目标池。架构可扩展到更多池。所有第三方迁移接口均经真机/官方源码实测确认后才实现。
