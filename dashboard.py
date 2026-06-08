@@ -828,6 +828,7 @@ def gpu_rows(sub):
 def build_full_config():
     env = read_env()
     accts = list_accounts()
+    import sniper as S
     all_cfgs = {acct: read_config(acct) for acct in accts}
     base = all_cfgs[accts[0]] if accts else {}
     common = {k: base.get(k) for k in COMMON_KEYS}
@@ -863,8 +864,10 @@ def build_full_config():
             "process_running": pid_for(acct) is not None,
             "rent_paused": rent_paused(acct),
             "raw": json.dumps(cfg, ensure_ascii=False, indent=2),
+            "pool": S.active_pool(cfg),
         }
-    return {"common": common, "common_diff": common_diff, "platforms": plats}
+    return {"common": common, "common_diff": common_diff, "platforms": plats,
+            "pools": [{"id": k, "label": v["label"]} for k, v in S.POOLS.items()]}
 
 def backup_and_write(path, obj):
     try:
@@ -893,6 +896,20 @@ def save_platform_cfg(acct, patch):
     cfg[plat] = sub
     backup_and_write(p, cfg)
     return {"ok": True, "platform": acct}
+
+def save_pool_cfg(acct, pool):
+    """切换某账号'新抢机器用哪个矿池'(顶层 config['pool'], 只影响新 create, 不迁移老机器)。"""
+    import sniper as S
+    if acct not in list_accounts():
+        return {"error": "账号无效"}
+    pool = str(pool or "").strip()
+    if pool not in S.POOLS:
+        return {"error": f"未知矿池: {pool}"}
+    p = cfg_path(acct)
+    cfg = read_json(p, {})
+    cfg["pool"] = pool          # 顶层! 不是 cfg[plat]
+    backup_and_write(p, cfg)
+    return {"ok": True, "platform": acct, "pool": pool}
 
 def save_common_cfg(data):
     if not isinstance(data, dict):
@@ -1130,6 +1147,8 @@ class H(BaseHTTPRequestHandler):
             if plat not in list_accounts():
                 return self._send(400, {"error": "账号无效"})
             return self._send(200, do_terminate(plat, str(data.get("id", "")), str(data.get("group", "")) or None))
+        if path == "/api/set-pool":
+            return self._send(200, save_pool_cfg(str(data.get("platform", "")), data.get("pool")))
         if path == "/api/save-platform":
             return self._send(200, save_platform_cfg(str(data.get("platform", "")), data.get("data")))
         if path == "/api/save-common":
@@ -1590,6 +1609,7 @@ return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
+<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select></div>
 </div>
 <div class=lbl style=margin-top:14px>GPU 型号 · 最高 $/h · 最低 TH/s</div>
 <div class=gpurow style=color:var(--mut);font-size:11px><div>GPU</div><div>最高 $/h</div><div>最低 TH/s</div><div></div></div>
@@ -1616,6 +1636,7 @@ ${rentBtn}
 async function savePw(){let pw=document.getElementById('newpw').value;if(pw.length<4){toast('密码至少 4 位');return;}
 let r=await api('/api/dashboard-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
 document.getElementById('newpw').value='';toast(r.error?('失败: '+r.error):'看板密码已更新');}
+async function setPool(aid,pool){let r;try{r=await api('/api/set-pool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,pool:pool})});}catch(e){toast('切换失败');return;}toast(r&&r.ok?('已切换新抢矿池: '+pool+'(重启应用后新机器生效)'):('失败: '+((r&&r.error)||'未知')));renderConfigTab();}
 async function loadLog(p){let n=document.getElementById('loglines_'+p).value;let pre=document.getElementById('log_'+p);
 pre.style.display='';pre.textContent='加载中…';
 try{let r=await api('/api/logs?platform='+p+'&lines='+n);pre.textContent=r.log||'(空)';pre.scrollTop=pre.scrollHeight;}catch(e){pre.textContent='加载失败';}}
