@@ -302,6 +302,29 @@ def alphapool_worker_hashrates(config):
     return workers
 
 
+TWPOOL_API = "https://api.tw-pool.com/api/worker_stats"
+
+def twpool_worker_hashrates(config):
+    """twpool per-worker 算力。返回 {worker_name: {hashrate_th, ip, version, gpu_info}}, 与 pearl_worker_hashrates 同 schema。
+    用 reported(矿机自报 hs, H/s)为当前算力; reported 的 key 形如 '{address}.{worker}'。"""
+    addr = str((config or {}).get("prl_address") or "").strip()
+    if not addr:
+        return {}
+    url = f"{TWPOOL_API}?address={urllib.parse.quote(addr)}&mode=realtime&excludeWorker=false&selectPool=pearl"
+    # 用 urllib.request.urlopen 发 GET(确保可被测试 mock)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode())
+    out = {}
+    reported = (data or {}).get("reported") or {}
+    prefix = addr + "."
+    for key, info in reported.items():
+        worker = key[len(prefix):] if key.startswith(prefix) else key
+        hs = float((info or {}).get("hs") or 0)
+        out[worker] = {"hashrate_th": hs / 1e12, "ip": None, "version": None, "gpu_info": []}
+    return out
+
+
 
 def compact_location(offer):
     return str(offer.get("geolocation") or offer.get("location") or "").strip()
