@@ -417,6 +417,27 @@ def record_rent(state, provider, external_id, gpu, price, result):
     })
 
 
+POOLS = {
+    "pearlhash": {"label": "PearlHash",
+                  "image": "docker.io/kuzigmgm/pearl-miner:v11",
+                  "reads_prl_host": True},
+    "twpool":    {"label": "TW Pool (小幣礦池)",
+                  "image": "docker.io/conishc/pearl-miner:twpool-v1.9.0-auto",
+                  "reads_prl_host": False},
+}
+
+def active_pool(config):
+    p = str((config or {}).get("pool") or "").strip()
+    return p if p in POOLS else "pearlhash"
+
+def effective_image(config):
+    """新抢机器用的镜像: 优先按 active_pool 的镜像; pool 未知/未配则回退 config['image']。"""
+    p = str((config or {}).get("pool") or "").strip()
+    if p in POOLS:
+        return POOLS[p]["image"]
+    return (config or {}).get("image")
+
+
 def make_env(config, provider, gpu, external_id):
     safe_gpu = re.sub(r"[^A-Za-z0-9]+", "-", gpu).strip("-").lower()
     worker = f"{config.get('worker_prefix', 'auto')}-{provider}-{safe_gpu}-{external_id}"
