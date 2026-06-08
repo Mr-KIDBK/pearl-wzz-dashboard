@@ -840,6 +840,79 @@ def restart_instance_with_env(provider, instance_id, env):
     )
 
 
+def migrate_runpod_pod(pod_id, image, env):
+    """迁移一台 runpod pod: POST /v1/pods/{id}/update 改 imageName + 完整 env → 触发 reset 用新镜像重起。
+    实测确认(2026-06-08): env 整体替换(非合并), 故必须传完整 env。返回 Pod 对象。"""
+    api_key = os.environ["RUNPOD_API_KEY"]
+    return request_json(
+        "POST",
+        f"https://rest.runpod.io/v1/pods/{pod_id}/update",
+        {"Authorization": f"Bearer {api_key}"},
+        {"imageName": image, "env": env},
+        timeout=60,
+    )
+
+
+def migrate_account(config, state, account_id, target_pool, live=True):
+    """把该账号现有 active 机器迁移到 target_pool, 并把 config['pool'] 设为 target_pool(新抢也用新池)。
+    - runpod: 每台原地 POST update 换 imageName + 完整 env(reset)。
+    - vast:   每台 DELETE 销毁(扫描循环用新池镜像自动重租)。
+    单台失败 try/except 收集、不中断整批; 迁移后 reset_low_eff_timers 给新机器全新观测窗口。
+    account_id 仅作结果标签(调用方已按账号注入对应平台 API key 到标准环境变量)。"""
+    if target_pool not in POOLS:
+        return {"error": f"unknown pool: {target_pool}"}
+    config["pool"] = target_pool
+    image = POOLS[target_pool]["image"]
+    reads_host = POOLS[target_pool]["reads_prl_host"]
+    results = []
+    # --- runpod: 原地换镜像 ---
+    if (config.get("runpod") or {}).get("enabled"):
+        try:
+            pods = list_runpod_pods()
+        except Exception as exc:
+            pods = []
+            results.append({"platform": "runpod", "id": None, "action": "list", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        for pod in pods:
+            pid = pod.get("id")
+            worker = ((pod.get("env") or {}).get("PRL_WORKER")) or pod.get("name")
+            env = {"PRL_ADDRESS": config["prl_address"], "PRL_WORKER": worker}
+            if reads_host:
+                env["PRL_HOST"] = config["prl_host"]
+            try:
+                if live:
+                    migrate_runpod_pod(pid, image, env)
+                results.append({"platform": "runpod", "id": pid, "action": "update", "ok": True, "error": None})
+            except Exception as exc:
+                log(f"migrate runpod pod {pid} failed: {type(exc).__name__}: {exc}")
+                results.append({"platform": "runpod", "id": pid, "action": "update", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    # --- vast: 销毁重租 ---
+    if (config.get("vast") or {}).get("enabled"):
+        try:
+            insts = list_vast_instances()
+        except Exception as exc:
+            insts = []
+            results.append({"platform": "vast", "id": None, "action": "list", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        for inst in insts:
+            iid = inst.get("id")
+            try:
+                if live:
+                    destroy_vast_instance(iid)
+                results.append({"platform": "vast", "id": iid, "action": "destroy", "ok": True, "error": None})
+            except Exception as exc:
+                log(f"migrate vast instance {iid} failed: {type(exc).__name__}: {exc}")
+                results.append({"platform": "vast", "id": iid, "action": "destroy", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    try:
+        reset_low_eff_timers(state)
+    except Exception as exc:
+        log(f"migrate reset_low_eff_timers failed: {type(exc).__name__}: {exc}")
+    summary = {
+        "runpod": sum(1 for r in results if r["platform"] == "runpod" and r["ok"]),
+        "vast": sum(1 for r in results if r["platform"] == "vast" and r["ok"]),
+        "failed": sum(1 for r in results if not r["ok"]),
+    }
+    return {"ok": True, "account_id": account_id, "target_pool": target_pool, "results": results, "summary": summary}
+
+
 def try_host_fallback(config, provider, rented, instance_id):
     """低效将销毁前的兜底: 若最近持续 0 算力且尚未切过 host, 把 PRL_HOST 切到备用地址并原机重启,
     重置观察窗口再观察一轮; 返回 True 表示已执行兜底(调用方应跳过本次销毁)。
