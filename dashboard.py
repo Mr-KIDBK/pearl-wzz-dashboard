@@ -47,7 +47,7 @@ SPECIFIC = {
               ("balance_usd", "num")],
 }
 HAS_CREATE = {"runpod", "tensordock"}
-NO_BALANCE_API = {"salad", "tensordock"}  # 无余额查询 API → 余额可在看板手填(总览内联编辑)
+NO_BALANCE_API = {"salad", "tensordock"}  # 无公共余额 API → 看板手填(总览内联编辑); salad 另有 portal 实时余额(salad_portal), 有则优先并隐藏手填
 
 def platform_of(account_id):
     """salad-2 → salad ; salad → salad"""
@@ -1071,6 +1071,11 @@ def build_rentals():
         bal = platform_balance(acct)
         burn = sum(float(m.get("price") or 0) for m in items)
         estimated = False
+        real = False
+        if plat == "salad":                      # salad: portal 真实余额优先于手填估算
+            rb = salad_real_balance(acct)
+            if rb is not None:
+                bal, real = rb, True
         if bal is None and cfg.get("balance_usd") is not None:  # 无 API 余额时用手填值按消耗估算
             try:
                 asof = iso_to_epoch(cfg.get("balance_asof")) or now
@@ -1080,7 +1085,8 @@ def build_rentals():
                 bal = None
         res[acct]["balance"] = bal
         res[acct]["balance_estimated"] = estimated
-        res[acct]["balance_editable"] = plat in NO_BALANCE_API  # 无 API 的平台允许总览内联手填
+        res[acct]["balance_real"] = real          # True=portal 实时余额(salad), 前端标「实时余额」
+        res[acct]["balance_editable"] = (plat in NO_BALANCE_API) and not real  # 无 API 平台手填; salad 有 portal 实时余额时隐藏手填(手填仅 portal 断连/未登录时回退)
         res[acct]["balance_usd"] = cfg.get("balance_usd")        # 原始手填值, 供编辑框预填
         res[acct]["burn_hourly"] = round(burn, 4)
         res[acct]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
@@ -1798,7 +1804,7 @@ let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[])
 let poolName=q=>q=='twpool'?'TW Pool':(q=='pearlhash'?'PearlHash':'未知');
 let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
-let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
+let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':(v.balance_real?'实时余额':'余额');balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
 let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
 
