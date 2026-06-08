@@ -1622,6 +1622,7 @@ if(diff[k]){let dv=Object.entries(diff[k]).map(([p,v])=>p+'='+(v==null||v===''?'
 w=` <span class=cdiff title="${esc(dv)}">⚠ 各平台当前不一致, 保存将统一覆盖</span>`;}
 return `<div class=fld>${label}${req?' <span class=req>必填</span>':''}${w}</div><input id="cm_${k}" value="${esc(c[k]==null?'':c[k])}" placeholder="${ph||''}">`;};
 return `<div class=lbl>全局配置 · COMMON</div>
+<div class=row style="margin-bottom:10px"><button class=b-warn onclick="migrateAll()">⇄ 一键全部账号迁移到…</button></div>
 <div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
@@ -1650,7 +1651,7 @@ return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
-<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select></div>
+<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select> <button class=b-warn onclick="migrateAcct('${p}')">⇄ 迁移现有机器到所选池</button></div>
 </div>
 <div class=lbl style=margin-top:14px>GPU 型号 · 最高 $/h · 最低 TH/s</div>
 <div class=gpurow style=color:var(--mut);font-size:11px><div>GPU</div><div>最高 $/h</div><div>最低 TH/s</div><div></div></div>
@@ -1681,6 +1682,47 @@ async function setPool(aid,pool){let r;try{r=await api('/api/set-pool',{method:'
 async function loadLog(p){let n=document.getElementById('loglines_'+p).value;let pre=document.getElementById('log_'+p);
 pre.style.display='';pre.textContent='加载中…';
 try{let r=await api('/api/logs?platform='+p+'&lines='+n);pre.textContent=r.log||'(空)';pre.scrollTop=pre.scrollHeight;}catch(e){pre.textContent='加载失败';}}
+async function _migrateConfirm(label,target,cntText){
+  let word=prompt('【一键迁移】将把 '+label+' 迁移到矿池 ['+target+']。\n'+cntText+'\n迁移期间这些机器会停机重启几分钟(runpod 原地换镜像/vast 销毁重租/salad 重建)。\n\n输入 MIGRATE 确认:');
+  return word==='MIGRATE';
+}
+async function _countAffected(aid){
+  try{
+    let rt=await api('/api/rentals');
+    let total=0,lines=[];
+    Object.entries(rt||{}).forEach(([acct,v])=>{
+      if(aid!=='all'&&acct!==aid)return;
+      let n=(v.machines||[]).length||0;total+=n;
+      if(n)lines.push(acct+': '+n+' 台');
+    });
+    return total?('受影响约 '+total+' 台 ('+lines.join(', ')+')'):'当前无在租机器(只切换配置)';
+  }catch(e){return '';}
+}
+async function migrateAcct(aid){
+  let sel=document.getElementById('pool_'+aid);if(!sel){toast('找不到矿池选择');return;}
+  let target=sel.value;
+  let cnt=await _countAffected(aid);
+  if(!await _migrateConfirm(aid,target,cnt)){toast('已取消(确认词不符)');return;}
+  toast('迁移中…(请稍候)');
+  let r;try{r=await api('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,target_pool:target,confirm:'MIGRATE'})});}catch(e){toast('迁移请求失败');return;}
+  _migrateToast(r);renderConfigTab();
+}
+async function migrateAll(){
+  let pools=(CFG&&CFG.pools)||[];
+  let target=prompt('全部账号迁移到哪个矿池? 可选: '+pools.map(o=>o.id).join(' / '));
+  if(!target){return;}
+  if(!pools.some(o=>o.id===target)){toast('未知矿池: '+target);return;}
+  let cnt=await _countAffected('all');
+  if(!await _migrateConfirm('全部账号',target,cnt)){toast('已取消(确认词不符)');return;}
+  toast('全部迁移中…(请稍候)');
+  let r;try{r=await api('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:'all',target_pool:target,confirm:'MIGRATE'})});}catch(e){toast('迁移请求失败');return;}
+  _migrateToast(r);renderConfigTab();
+}
+function _migrateToast(r){
+  if(!r||(!r.ok&&r.error)){toast('迁移失败: '+((r&&r.error)||'未知'));return;}
+  let parts=(r.accounts||[]).map(a=>{let res=a.result||{};if(res.error)return a.account+': 错误';let sm=res.summary||{};let ok=(sm.runpod||0)+(sm.vast||0)+(sm.salad||0);let f=sm.failed||0;return a.account+': '+ok+'台'+(f?(' / '+f+'失败'):'');});
+  toast('迁移完成 → '+r.target_pool+': '+parts.join(' | ')+'。重启对应监控后新抢才用新池。');
+}
 
 function gpuRowHtml(p,i,g){return `<div class=gpurow data-gpu>
 <input value="${esc(g.gpu||'')}" placeholder="RTX 4090" data-f=gpu>
