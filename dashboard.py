@@ -1031,14 +1031,18 @@ def do_migrate(data):
         return {"error": "账号无效"}
     results = []
     for acct in accts:
-        plat = platform_of(acct)
-        kv = read_env().get(key_var_for(acct), "")
-        std = KEYNAME.get(plat, "")
-        if kv and std:
-            os.environ[std] = kv
-        save_pool_cfg(acct, target)          # 落盘 pool(新抢用新池, 监控重启后生效)
-        cfg = read_config(acct)
         try:
+            plat = platform_of(acct)
+            kv = read_env().get(key_var_for(acct), "")
+            std = KEYNAME.get(plat, "")
+            if kv and std:
+                os.environ[std] = kv
+            sp = save_pool_cfg(acct, target)            # 先落盘 pool
+            if isinstance(sp, dict) and sp.get("error"):
+                # 落盘失败则不迁移该账号(避免配置与实际不一致), 但不中断其它账号
+                results.append({"account": acct, "result": {"error": f"落盘 pool 失败: {sp.get('error')}"}})
+                continue
+            cfg = read_config(acct)
             r = S.migrate_account(cfg, {}, acct, target, live=True)
         except Exception as e:
             r = {"error": f"{type(e).__name__}: {e}"}

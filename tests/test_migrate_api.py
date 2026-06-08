@@ -41,5 +41,15 @@ calls.clear(); saved.clear()
 r5=D.do_migrate({"platform":"all","target_pool":"twpool","confirm":"MIGRATE"})
 ck("all 迁移所有账号", r5.get("ok") and len(calls)==len(accts))
 
+# save_pool_cfg 失败 → 不迁移该账号, 不中断
+calls.clear()
+D.save_pool_cfg=lambda a,p: {"error":"disk full"}
+rfail=D.do_migrate({"platform":acct,"target_pool":"twpool","confirm":"MIGRATE"})
+ck("落盘失败不调 migrate_account", len(calls)==0)
+ck("落盘失败结果含 error", bool(rfail["accounts"][0]["result"].get("error")))
+ck("落盘失败整体仍 ok=True(不中断)", rfail.get("ok") is True)
+# 恢复 mock 供后续(若后面还有断言)
+D.save_pool_cfg=lambda a,p: {"ok":True}
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
