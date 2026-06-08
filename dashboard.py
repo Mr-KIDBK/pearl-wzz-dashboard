@@ -746,7 +746,10 @@ def _twpool_view():
     wlist, total = [], 0.0
     for key, info in reported.items():
         worker = key[len(prefix):] if key.startswith(prefix) else key
-        th = round(float((info or {}).get("hs") or 0) / 1e12, 2)
+        try:
+            th = round(float((info or {}).get("hs") or 0) / 1e12, 2)
+        except (TypeError, ValueError):
+            th = 0.0
         total += th
         wlist.append({"name": worker, "th": th, "ip": None, "gpus": []})
     bal = data.get("balance") if isinstance(data, dict) else None
@@ -767,7 +770,7 @@ def pool_view(which):
         if cur is None or (w.get("th") or 0) > (cur.get("th") or 0):
             by_name[w["name"]] = w
     bals = [v for v in (ph["pool_balance"], tw["pool_balance"]) if v is not None]
-    return {"workers": list(by_name.values()),
+    return {"workers": sorted(by_name.values(), key=lambda w: w.get("name") or ""),
             "total_hashrate_th": round((ph["total_hashrate_th"] or 0) + (tw["total_hashrate_th"] or 0), 2),
             "pool_balance": (round(sum(bals), 4) if bals else None),
             "pool_error": ph["pool_error"] or tw["pool_error"]}

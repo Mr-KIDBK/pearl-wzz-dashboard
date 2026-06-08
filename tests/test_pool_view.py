@@ -39,5 +39,15 @@ ck("merged 记录 pool_error", bool(mg2.get("pool_error")))
 # 未知 which → merged
 D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{f"{addr}.gpu10":{"hs":140000000000000}}}
 ck("未知 which 回退 merged", {w["name"] for w in D.pool_view("zzz")["workers"]}=={"wph","gpu10"})
+
+# hs 非数字不崩, 记 0
+D.twpool_data=lambda force=False: {"balance":1.0,"paid":2.0,"reported":{f"{addr}.bad":{"hs":"NaNstr"}}}
+twb=D.pool_view("twpool")
+ck("hs 非数字 → 该 worker th=0 不崩", twb["workers"][0]["th"]==0.0)
+# merged workers 按 name 排序
+D.pool_data=lambda force=False: {"balance":10.0,"connected_workers":[{"worker_name":"zzz","ip":"1","gpu_info":[{"name":"x","hashrate":1000000000000}]}]}
+D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{f"{addr}.aaa":{"hs":2000000000000}}}
+names=[w["name"] for w in D.pool_view("merged")["workers"]]
+ck("merged workers 按 name 升序", names==sorted(names))
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
