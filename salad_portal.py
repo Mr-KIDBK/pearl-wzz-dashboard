@@ -64,3 +64,61 @@ def login_accounts(accounts):
         finally:
             if browser:
                 browser.close()
+
+PORTAL_BASE = "https://portal-api.salad.com/api/portal"
+_FETCH_JS = "async (u) => { const r = await fetch(u, {credentials:'include'}); return r.ok ? await r.json() : null; }"
+
+def _refresh_account(ctx, a, groups_fn, on_update):
+    """单账号一轮: 加载 portal 页(续 cf_clearance)→ 页内 fetch 余额 + 各组实例 gpu_class → on_update。"""
+    org = a["org"]; proj = a.get("project") or "default"
+    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    page.goto(f"https://portal.salad.com/organizations/{org}",
+              wait_until="domcontentloaded", timeout=30000)
+    bal_url = f"{PORTAL_BASE}/organizations/{org}/billing-profile/credits-balance"
+    balance = parse_balance(page.evaluate(_FETCH_JS, bal_url))
+    gpu_map = {}
+    for g in (groups_fn(a["account"]) or []):
+        gseg = urllib.parse.quote(str(g), safe='')
+        url = f"{PORTAL_BASE}/organizations/{org}/projects/{proj}/containers/{gseg}/instances"
+        gpu_map.update(parse_instances_gpu(page.evaluate(_FETCH_JS, url)))
+    if balance is None and not gpu_map:
+        _log(f"{a['account']} 抓取为空(scid 可能过期, 重跑 salad_login.py)")
+    on_update(a["account"], gpu_map or None, balance)
+
+def run_manager(accounts, interval, groups_fn, on_update, stop_event):
+    """常驻: 一个 headless chromium + 每账号一个隔离 context(storage_state)。
+    循环每 interval 秒刷新一遍; 单账号失败只记日志不影响其它。playwright 缺失则直接返回(优雅降级)。
+    accounts: [{"account","org","project","session_path"}]; groups_fn(account)->[组名]; on_update(account, gpu_map|None, balance|None)。"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        _log("playwright 未安装, salad portal 抓取跳过")
+        return
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True)
+        except Exception as e:
+            _log(f"启动 chromium 失败({e}); 先跑 `playwright install chromium`")
+            return
+        ctxs = {}
+        for a in accounts:
+            try:
+                ctxs[a["account"]] = browser.new_context(storage_state=a["session_path"])
+            except Exception as e:
+                _log(f"{a['account']} 载入会话失败({e}); 重跑 salad_login.py")
+        try:
+            while not stop_event.is_set():
+                for a in accounts:
+                    ctx = ctxs.get(a["account"])
+                    if not ctx:
+                        continue
+                    try:
+                        _refresh_account(ctx, a, groups_fn, on_update)
+                    except Exception as e:
+                        _log(f"{a['account']} portal 刷新失败: {type(e).__name__}: {e}")
+                stop_event.wait(interval)
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
