@@ -245,6 +245,30 @@ def pool_data(force=False):
     return data
 
 
+_twpool = {"data": None, "ts": 0.0}
+TWPOOL_API = "https://api.tw-pool.com/api/worker_stats"
+
+def twpool_data(force=False):
+    """查 twpool per-worker 算力 + 余额, serve-stale 缓存(同 pool_data)。
+    返回 {"reported": {...}, "balance": <PRL>, "paid": <PRL>, ...} 或 {"_error": ...}。"""
+    now = time.time()
+    if _twpool["data"] is not None and not force and (now - _twpool["ts"] < POOL_STALE_MAX):
+        return _twpool["data"]
+    addr = prl_address()
+    data = {}
+    if addr:
+        try:
+            url = f"{TWPOOL_API}?address={urllib.parse.quote(addr)}&mode=realtime&excludeWorker=false&selectPool=pearl"
+            req = urllib.request.Request(url, headers={"User-Agent": "sniper-dashboard/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            data = {"_error": f"{type(e).__name__}: {e}"}
+    _twpool["data"] = data
+    _twpool["ts"] = now
+    return data
+
+
 # ---------- Salad 实时 ----------
 _salad = {}  # account_id -> {"data", "ts"}
 SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超此值(后台异常)才在请求线程同步兜底重算
@@ -565,6 +589,7 @@ def _refresh_once():
     except Exception:
         pass
     pool_data(force=True)
+    twpool_data(force=True)
     for acct in list_accounts():
         try:
             if platform_of(acct) == "salad":
