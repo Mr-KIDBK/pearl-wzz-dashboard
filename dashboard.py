@@ -1651,7 +1651,7 @@ return `<div class=lbl>${esc(v.label||p)} · 平台配置</div>
 <div class=grid2>
 <div class=fld>启用 enabled</div><div><input type=checkbox id="en_${p}" ${v.enabled?'checked':''}></div>
 ${v.has_create?`<div class=fld>自动建机 create_enabled</div><div><input type=checkbox id="ce_${p}" ${v.create_enabled?'checked':''}></div>`:''}
-<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select> <button class=b-warn onclick="migrateAcct('${p}')">⇄ 迁移现有机器到所选池</button></div>
+<div class=fld>新抢矿池 pool</div><div><select id="pool_${p}" onchange="setPool('${p}',this.value)">${(CFG.pools||[]).map(o=>`<option value="${o.id}" ${v.pool==o.id?'selected':''}>${esc(o.label)}</option>`).join('')}</select> <button class=b-warn onclick="migrateAcct('${esc(p)}')">⇄ 迁移现有机器到所选池</button></div>
 </div>
 <div class=lbl style=margin-top:14px>GPU 型号 · 最高 $/h · 最低 TH/s</div>
 <div class=gpurow style=color:var(--mut);font-size:11px><div>GPU</div><div>最高 $/h</div><div>最低 TH/s</div><div></div></div>
@@ -1696,7 +1696,7 @@ async function _countAffected(aid){
       if(n)lines.push(acct+': '+n+' 台');
     });
     return total?('受影响约 '+total+' 台 ('+lines.join(', ')+')'):'当前无在租机器(只切换配置)';
-  }catch(e){return '';}
+  }catch(e){return '(获取在租信息失败, 请谨慎确认)';}
 }
 async function migrateAcct(aid){
   let sel=document.getElementById('pool_'+aid);if(!sel){toast('找不到矿池选择');return;}
@@ -1710,7 +1710,7 @@ async function migrateAcct(aid){
 async function migrateAll(){
   let pools=(CFG&&CFG.pools)||[];
   let target=prompt('全部账号迁移到哪个矿池? 可选: '+pools.map(o=>o.id).join(' / '));
-  if(!target){return;}
+  if(!target){toast('已取消');return;}
   if(!pools.some(o=>o.id===target)){toast('未知矿池: '+target);return;}
   let cnt=await _countAffected('all');
   if(!await _migrateConfirm('全部账号',target,cnt)){toast('已取消(确认词不符)');return;}
@@ -1719,7 +1719,7 @@ async function migrateAll(){
   _migrateToast(r);renderConfigTab();
 }
 function _migrateToast(r){
-  if(!r||(!r.ok&&r.error)){toast('迁移失败: '+((r&&r.error)||'未知'));return;}
+  if(!r||!r.ok){toast('迁移失败: '+((r&&r.error)||'未知'));return;}
   let parts=(r.accounts||[]).map(a=>{let res=a.result||{};if(res.error)return a.account+': 错误';let sm=res.summary||{};let ok=(sm.runpod||0)+(sm.vast||0)+(sm.salad||0);let f=sm.failed||0;return a.account+': '+ok+'台'+(f?(' / '+f+'失败'):'');});
   toast('迁移完成 → '+r.target_pool+': '+parts.join(' | ')+'。重启对应监控后新抢才用新池。');
 }
