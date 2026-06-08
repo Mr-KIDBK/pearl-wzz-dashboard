@@ -39,3 +39,28 @@ def parse_balance(resp):
 
 def _log(msg):
     print(f"[salad_portal] {msg}", file=sys.stderr, flush=True)
+
+def login_accounts(accounts):
+    """有头多账号登录: 每账号一个隔离 context(独立 cookie jar, 互不踢), 用户人工登录后存 storage_state。
+    accounts: [{"account": str, "org": str, "session_path": str}]。"""
+    from playwright.sync_api import sync_playwright
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        browser = None
+        try:
+            browser = p.chromium.launch(headless=False)
+            for a in accounts:
+                ctx = browser.new_context()
+                try:
+                    page = ctx.new_page()
+                    page.goto("https://portal.salad.com/", wait_until="domcontentloaded")
+                    print(f"\n[{a['account']}] 请在弹出的窗口登录该账号 (org={a.get('org') or '未配置'})。"
+                          f"\n登录进入 portal 首页后, 回到终端按回车保存会话...", flush=True)
+                    input()
+                    ctx.storage_state(path=a["session_path"])
+                    print(f"[{a['account']}] 会话已保存 → {a['session_path']}", flush=True)
+                finally:
+                    ctx.close()
+        finally:
+            if browser:
+                browser.close()
