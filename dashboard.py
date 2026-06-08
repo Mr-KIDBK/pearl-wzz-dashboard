@@ -1011,6 +1011,41 @@ def do_terminate(acct, mid, group=None):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def do_migrate(data):
+    """一键迁移到 target_pool。confirm 必须 == 'MIGRATE'。platform 为账号 id 或 'all'。
+    逐账号: 注入该账号 key → 持久化 pool(save_pool_cfg)→ 调 sniper.migrate_account 实际迁移现有机器。
+    state 传 {}(运行中的监控自管 state, 双池监控保护迁移机器, 避免写 state 竞争)。
+    注: 新抢机器用新池需重启该账号监控才生效(migrate 只改现有机器 + 落盘 pool)。"""
+    import sniper as S
+    if str(data.get("confirm", "")) != "MIGRATE":
+        return {"error": "需输入确认词 MIGRATE"}
+    target = str(data.get("target_pool", "")).strip()
+    if target not in S.POOLS:
+        return {"error": f"未知矿池: {target}"}
+    platform = str(data.get("platform", ""))
+    if platform == "all":
+        accts = list_accounts()
+    elif platform in list_accounts():
+        accts = [platform]
+    else:
+        return {"error": "账号无效"}
+    results = []
+    for acct in accts:
+        plat = platform_of(acct)
+        kv = read_env().get(key_var_for(acct), "")
+        std = KEYNAME.get(plat, "")
+        if kv and std:
+            os.environ[std] = kv
+        save_pool_cfg(acct, target)          # 落盘 pool(新抢用新池, 监控重启后生效)
+        cfg = read_config(acct)
+        try:
+            r = S.migrate_account(cfg, {}, acct, target, live=True)
+        except Exception as e:
+            r = {"error": f"{type(e).__name__}: {e}"}
+        results.append({"account": acct, "result": r})
+    return {"ok": True, "target_pool": target, "accounts": results}
+
+
 # ---------- HTTP ----------
 def _secret():
     return hashlib.sha256(("pearl-dash::" + str(CONF.get("password", ""))).encode()).digest()
@@ -1147,6 +1182,8 @@ class H(BaseHTTPRequestHandler):
             if plat not in list_accounts():
                 return self._send(400, {"error": "账号无效"})
             return self._send(200, do_terminate(plat, str(data.get("id", "")), str(data.get("group", "")) or None))
+        if path == "/api/migrate":
+            return self._send(200, do_migrate(data))
         if path == "/api/set-pool":
             return self._send(200, save_pool_cfg(str(data.get("platform", "")), data.get("pool")))
         if path == "/api/save-platform":
