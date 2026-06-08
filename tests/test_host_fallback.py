@@ -41,6 +41,15 @@ check("runpod 调用 restart 一次", len(calls) == 1 and calls[0][0] == "runpod
 check("runpod env 已切到 fallback host", len(calls) == 1 and calls[0][2].get("PRL_HOST") == "9.9.9.9:9000")
 check("runpod 标记 host_switched", rented.get("host_switched") is True)
 
+# --- twpool: active_pool=twpool 不读 PRL_HOST → 即使条件全满足也禁用兜底 ---
+config_tw, rented_tw = make_scene()
+config_tw["pool"] = "twpool"
+calls.clear()
+r_tw = S.try_host_fallback(config_tw, "runpod", rented_tw, "pod-tw-1")
+check("active_pool=twpool 时 host 兜底禁用(返回 False)", r_tw is False)
+check("twpool 未调用 restart", len(calls) == 0)
+check("twpool 未标记 host_switched", not rented_tw.get("host_switched"))
+
 if fails:
     print(f"\n{fails} 个断言失败"); sys.exit(1)
 print("\n全部通过")

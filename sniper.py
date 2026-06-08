@@ -599,7 +599,7 @@ def rent_vast(config, match, state, live):
     else:
         config["vast"]["_current_price"] = old_price
     body = {
-        "image": config["image"],
+        "image": effective_image(config),
         "label": env["PRL_WORKER"],
         "disk": float(config["vast"].get("disk_gb", 20)),
         "runtype": "args",
@@ -850,6 +850,9 @@ def try_host_fallback(config, provider, rented, instance_id):
     Vast 不支持原地改 env(env 在创建时烧进容器, PUT /instances/{id}/ 只收 state/label,
     会静默忽略 env 且不重启)→ 对 vast 禁用本兜底, 命中低效直接走正常销毁。"""
     if provider != "runpod":
+        return False
+    if not POOLS.get(active_pool(config), {}).get("reads_prl_host", True):
+        # 当前抢卡池(如 twpool)不读 PRL_HOST → 切 host 无意义, 禁用兜底, 命中低效直接走正常销毁/回收。
         return False
     cfg = config.get(provider, {})
     if not cfg.get("host_fallback_enabled", True):
@@ -1419,7 +1422,7 @@ def try_runpod_create(config, state, live):
                 "gpuCount": 1,
                 "gpuTypeIds": [gpu_type],
                 "gpuTypePriority": "custom",
-                "imageName": config["image"],
+                "imageName": effective_image(config),
                 "env": env,
                 "interruptible": False,
                 "containerDiskInGb": int(cfg.get("container_disk_gb", 20)),
