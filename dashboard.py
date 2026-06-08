@@ -720,6 +720,59 @@ def reset_stats():
     return {"ok": True}
 
 
+# ---------- 矿池视图映射 ----------
+def _pearlhash_view():
+    """pearlhash 矿池视图: {workers, total_hashrate_th, pool_balance, pool_error}。"""
+    pool = pool_data()
+    err = pool.get("_error") if isinstance(pool, dict) else None
+    workers = pool.get("connected_workers", []) if isinstance(pool, dict) else []
+    wlist, total = [], 0.0
+    for w in workers:
+        wth = sum(hashrate_th(g.get("hashrate")) for g in (w.get("gpu_info") or []))
+        total += wth
+        wlist.append({"name": w.get("worker_name"), "th": round(wth, 2), "ip": w.get("ip"),
+                      "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
+    bal = pool.get("balance") if isinstance(pool, dict) else None
+    return {"workers": wlist, "total_hashrate_th": round(total, 2),
+            "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
+
+def _twpool_view():
+    """twpool 矿池视图: {workers, total_hashrate_th, pool_balance, pool_error}。"""
+    data = twpool_data()
+    err = data.get("_error") if isinstance(data, dict) else None
+    reported = (data.get("reported") or {}) if isinstance(data, dict) else {}
+    addr = prl_address() or ""
+    prefix = addr + "."
+    wlist, total = [], 0.0
+    for key, info in reported.items():
+        worker = key[len(prefix):] if key.startswith(prefix) else key
+        th = round(float((info or {}).get("hs") or 0) / 1e12, 2)
+        total += th
+        wlist.append({"name": worker, "th": th, "ip": None, "gpus": []})
+    bal = data.get("balance") if isinstance(data, dict) else None
+    return {"workers": wlist, "total_hashrate_th": round(total, 2),
+            "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
+
+def pool_view(which):
+    """按 which 返回显示映射: {workers, total_hashrate_th, pool_balance, pool_error}。
+    which: 'pearlhash' | 'twpool' | 'merged'(默认/未知 → merged)。无状态(产出在 build_summary 另算)。"""
+    if which == "pearlhash":
+        return _pearlhash_view()
+    if which == "twpool":
+        return _twpool_view()
+    ph, tw = _pearlhash_view(), _twpool_view()
+    by_name = {}
+    for w in ph["workers"] + tw["workers"]:
+        cur = by_name.get(w["name"])
+        if cur is None or (w.get("th") or 0) > (cur.get("th") or 0):
+            by_name[w["name"]] = w
+    bals = [v for v in (ph["pool_balance"], tw["pool_balance"]) if v is not None]
+    return {"workers": list(by_name.values()),
+            "total_hashrate_th": round((ph["total_hashrate_th"] or 0) + (tw["total_hashrate_th"] or 0), 2),
+            "pool_balance": (round(sum(bals), 4) if bals else None),
+            "pool_error": ph["pool_error"] or tw["pool_error"]}
+
+
 # ---------- 总览数据 ----------
 def _is_running(machine):
     """是否算"在跑": 非 salad 的活跃租约无 state(None)直接算; salad 按实例 state,
