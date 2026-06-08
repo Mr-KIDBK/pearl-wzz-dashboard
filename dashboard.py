@@ -782,15 +782,9 @@ def _is_running(machine):
     仅 'running' 算(排除 creating/downloading/allocating/stopping —— 这些已分配但还没在挖)。"""
     return machine.get("state") in (None, "running")
 
-def build_summary():
-    pool = pool_data()
-    workers = pool.get("connected_workers", []) if isinstance(pool, dict) else []
-    total_th, wlist = 0.0, []
-    for w in workers:
-        wth = sum(hashrate_th(g.get("hashrate")) for g in (w.get("gpu_info") or []))
-        total_th += wth
-        wlist.append({"name": w.get("worker_name"), "th": round(wth, 2), "ip": w.get("ip"),
-                      "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
+def build_summary(pool_key="merged"):
+    pool_key = pool_key if pool_key in ("pearlhash", "twpool", "merged") else "merged"
+    pv = pool_view(pool_key)
     per_plat, running = {}, 0
     for acct in list_accounts():
         n = sum(1 for m in active_rentals(acct) if _is_running(m))  # 只数真正在跑(salad 排除创建/下载中)
@@ -800,14 +794,22 @@ def build_summary():
     stats = read_json(STATS_PATH, {})
     cp = coin_price()
     rent_usd = round(float(stats.get("cumulative_usd", 0.0)), 4)
-    output = round(tick_output(pool), 4)     # 累计产出 pearl(自重置起算)
+    ph_output = round(tick_output(pool_data()), 4)     # 始终调: 保持 pearlhash 自重置累加
+    tw = twpool_data()
+    tw_total = round(float((tw or {}).get("balance") or 0) + float((tw or {}).get("paid") or 0), 4) if isinstance(tw, dict) else 0.0
+    if pool_key == "pearlhash":
+        output, basis = ph_output, "since_reset"
+    elif pool_key == "twpool":
+        output, basis = tw_total, "all_time"
+    else:
+        output, basis = round(ph_output + tw_total, 4), "mixed"
     output_usd = round(output * cp, 2)       # 折合 USD
     return {
         "wallet": prl_address(),
         "running_machines": running,
         "running_by_platform": per_plat,
-        "total_hashrate_th": round(total_th, 2),
-        "workers": wlist,
+        "total_hashrate_th": pv["total_hashrate_th"],
+        "workers": pv["workers"],
         "cumulative_rent_usd": rent_usd,
         "current_hourly_usd": round(float(stats.get("current_hourly_usd", 0.0)), 4),
         "coin_price_usd": cp,
@@ -815,8 +817,11 @@ def build_summary():
         "cumulative_output": output,
         "cumulative_output_usd": output_usd,
         "cumulative_profit_usd": round(output_usd - rent_usd, 2),
+        "produced_basis": basis,
+        "pool_balance": pv["pool_balance"],
+        "pool_view": pool_key,
         "stats_since": int(float(stats.get("reset_epoch") or stats.get("last_epoch") or 0)),
-        "pool_error": pool.get("_error") if isinstance(pool, dict) else None,
+        "pool_error": pv["pool_error"],
         "ts": int(time.time()),
     }
 
@@ -1214,7 +1219,9 @@ class H(BaseHTTPRequestHandler):
                     p = 15
                 return self._send(200, kline_data(p))
             if path == "/api/summary":
-                return self._send(200, build_summary())
+                qs = urllib.parse.parse_qs(self.path.split("?",1)[1] if "?" in self.path else "")
+                pk = (qs.get("pool") or ["merged"])[0]
+                return self._send(200, build_summary(pk))
             if path == "/api/rentals":
                 return self._send(200, build_rentals())
             # ↓ 以下仅管理员;访客(guest)只能看总览数据与工具集
