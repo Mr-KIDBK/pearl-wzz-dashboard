@@ -1131,8 +1131,20 @@ def do_migrate(data):
                 # 落盘失败则不迁移该账号(避免配置与实际不一致), 但不中断其它账号
                 results.append({"account": acct, "result": {"error": f"落盘 pool 失败: {sp.get('error')}"}})
                 continue
+            # vast 迁移特殊: 镜像创建时烧死, 迁移=销毁重租, 靠监控用新池镜像重租。
+            # 监控只在启动时读 config → 必须先重启监控加载新池, 否则销毁后用旧池镜像重租(白干)。
+            # 重启成功才销毁; 监控没起来则取消(避免销毁后无监控重租导致机器丢失)。runpod/salad 直接换镜像, 无需重启。
+            restarted = False
+            if plat == "vast":
+                rp = restart_platform(acct)
+                if not (isinstance(rp, dict) and rp.get("process_running")):
+                    results.append({"account": acct, "result": {"error": "vast 监控重启失败, 已取消迁移(避免销毁后无监控重租)"}})
+                    continue
+                restarted = True
             cfg = read_config(acct)
             r = S.migrate_account(cfg, {}, acct, target, live=True)
+            if isinstance(r, dict):
+                r["monitor_restarted"] = restarted
         except Exception as e:
             r = {"error": f"{type(e).__name__}: {e}"}
         results.append({"account": acct, "result": r})

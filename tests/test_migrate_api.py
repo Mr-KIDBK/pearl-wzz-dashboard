@@ -51,5 +51,30 @@ ck("落盘失败整体仍 ok=True(不中断)", rfail.get("ok") is True)
 # 恢复 mock 供后续(若后面还有断言)
 D.save_pool_cfg=lambda a,p: {"ok":True}
 
+# ===== vast 迁移: 销毁前先重启监控, 重启成功才迁移 =====
+# 准备: migrate_account/save_pool_cfg 仍 mock(沿用上文 calls/saved); 新 mock restart_platform
+restarts=[]
+D.restart_platform=lambda a: (restarts.append(a), {"ok":True,"platform":a,"process_running":True})[1]
+D.save_pool_cfg=lambda a,p: {"ok":True}
+calls.clear()
+rv=D.do_migrate({"platform":"vast","target_pool":"twpool","confirm":"MIGRATE"})
+ck("vast 迁移前重启了 vast 监控", restarts==["vast"])
+ck("vast 重启成功后调 migrate_account", any(c[0]=="vast" for c in calls))
+ck("vast 结果含 monitor_restarted=True", rv["accounts"][0]["result"].get("monitor_restarted") is True)
+
+# 非 vast(runpod 账号)不重启监控
+rp_acct=next((a for a in D.list_accounts() if D.platform_of(a)=="runpod"), None)
+if rp_acct:
+    restarts.clear(); calls.clear()
+    D.do_migrate({"platform":rp_acct,"target_pool":"twpool","confirm":"MIGRATE"})
+    ck("runpod 迁移不重启监控", restarts==[])
+
+# vast 监控重启失败 → 取消迁移(不调 migrate_account)
+restarts.clear(); calls.clear()
+D.restart_platform=lambda a: {"ok":False,"platform":a,"process_running":False}
+rf=D.do_migrate({"platform":"vast","target_pool":"twpool","confirm":"MIGRATE"})
+ck("vast 监控重启失败不调 migrate_account", not any(c[0]=="vast" for c in calls))
+ck("vast 重启失败结果含 error", bool(rf["accounts"][0]["result"].get("error")))
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
