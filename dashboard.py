@@ -589,7 +589,10 @@ def _refresh_once():
     except Exception:
         pass
     pool_data(force=True)
-    twpool_data(force=True)
+    try:
+        twpool_data(force=True)
+    except Exception:
+        pass
     for acct in list_accounts():
         try:
             if platform_of(acct) == "salad":
