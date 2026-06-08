@@ -98,3 +98,16 @@ bash scripts/stop-all.sh && bash scripts/start-all.sh        # 重启, 看板自
 ---
 
 > 详细部署/调参/各平台说明在本地 `docs/`(不随仓库分发)。
+
+## Salad GPU/单价/真实余额(可选, 需 Playwright)
+
+salad 迁 twpool 后, 公共 API 不再提供 GPU 型号。开启后用浏览器会话从 portal-api 抓真实 `gpu_class` + 信用余额:
+
+1. 装依赖: `pip install -r requirements.txt && playwright install chromium`
+2. 一次性登录(有头, 每个 salad 账号一个隔离窗口): `python3 salad_login.py`
+   - 在弹出的窗口里登录对应账号(过 Turnstile/OTP), 完成后回终端按回车保存会话。
+   - 会话存到 `secrets/salad_session_<账号>.json`(已 gitignore, 切勿提交)。
+3. 重启 dashboard。常驻 headless 浏览器会自动续 Cloudflare 通行证并定时刷新 GPU/余额。
+4. scid 过期(较久)后 salad 卡显示退回区间/估算, 重跑第 2 步即可。
+
+未装 Playwright / 未登录时, 整套静默跳过, 不影响其它功能。

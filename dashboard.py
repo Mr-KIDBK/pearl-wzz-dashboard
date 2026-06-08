@@ -47,7 +47,7 @@ SPECIFIC = {
               ("balance_usd", "num")],
 }
 HAS_CREATE = {"runpod", "tensordock"}
-NO_BALANCE_API = {"salad", "tensordock"}  # 无余额查询 API → 余额可在看板手填(总览内联编辑)
+NO_BALANCE_API = {"salad", "tensordock"}  # 无公共余额 API → 看板手填(总览内联编辑); salad 另有 portal 实时余额(salad_portal), 有则优先并隐藏手填
 
 def platform_of(account_id):
     """salad-2 → salad ; salad → salad"""
@@ -357,6 +357,56 @@ SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超
 SALAD_WORKERS = 8        # 每账号容器组并发拉取的线程数
 REFRESH_INTERVAL = 30.0  # 后台刷新所有缓存(salad/余额/矿池)的周期(秒); 循环为 refresh→sleep, 轮次不重叠
 
+# ---------- Salad portal-api 会话抓取(GPU/余额, 由 salad_portal 常驻线程填充) ----------
+_salad_gpu = {}        # account -> {"data": {instance_id: gpu_class}, "ts"}
+_salad_balance = {}    # account -> {"data": usd, "ts"}
+_portal_lock = threading.Lock()
+PORTAL_STALE_MAX = 1800.0     # 超此值认为管理器已停/会话过期 → 回退(GPU 退区间、余额退估算)
+PORTAL_REFRESH_INTERVAL = 120.0  # 常驻浏览器刷新周期(< cf_clearance ~30min)
+
+def salad_gpu_for(account_id):
+    """该账号 {instance_id: gpu_class}(新鲜则返回, 否则 {})。"""
+    slot = _salad_gpu.get(account_id)
+    if slot and (time.time() - slot["ts"] < PORTAL_STALE_MAX):
+        return slot.get("data") or {}
+    return {}
+
+def salad_real_balance(account_id):
+    """该账号 portal 真实余额 USD(新鲜且非空则返回, 否则 None → 回退手填估算)。"""
+    slot = _salad_balance.get(account_id)
+    if slot and slot.get("data") is not None and (time.time() - slot["ts"] < PORTAL_STALE_MAX):
+        return slot["data"]
+    return None
+
+def _portal_update(account_id, gpu_map, balance_usd):
+    """salad_portal 常驻线程回调: 写缓存(加锁)。None 表示该轮没拿到 → 不覆盖旧值(留待过期回退)。"""
+    now = time.time()
+    with _portal_lock:
+        if gpu_map is not None:
+            _salad_gpu[account_id] = {"data": gpu_map, "ts": now}
+        if balance_usd is not None:
+            _salad_balance[account_id] = {"data": balance_usd, "ts": now}
+
+def salad_group_names(account_id):
+    """salad 容器组名: config include_container_groups 优先; 为空则公共 API 列出。供 portal 抓取按组取实例。"""
+    plat = platform_of(account_id)
+    scfg = read_config(account_id).get(plat, {}) or {}
+    names = scfg.get("include_container_groups") or []
+    if names:
+        return list(names)
+    kv = key_var_for(account_id)
+    key = read_env().get(kv) or os.environ.get(kv, "")
+    org = scfg.get("organization_name")
+    proj = scfg.get("project_name") or "default"  # 与 start_portal_manager 一致: 空 project 回退 default
+    base = str(scfg.get("base_url", "https://api.salad.com/api/public")).rstrip("/")
+    if not (key and org and proj):
+        return []
+    try:
+        d = salad_get(f"{base}/organizations/{org}/projects/{proj}/containers", key)
+        return [g.get("name") for g in (d.get("items") or []) if g.get("name")]
+    except Exception:
+        return []
+
 def salad_get(url, key):
     req = urllib.request.Request(url, headers={"Salad-Api-Key": key, "User-Agent": "sniper-dashboard/1.0"})
     with urllib.request.urlopen(req, timeout=12) as r:
@@ -446,6 +496,7 @@ def _salad_compute(account_id):
             d = salad_get(pre, key)
             names = [g.get("name") for g in (d.get("items") or [])]
         watch = read_state(account_id).get("salad_instance_watch") or {}
+        gpu_cache = salad_gpu_for(account_id)  # portal gpu_class: {instance_id: gpu_class}(优先源)
         # 矿池侧: salad worker 名 = <prefix>-salad-<machine_id>, gpu_info 带真实卡型
         pool = pool_data()
         pool_workers = (pool.get("connected_workers") or []) if isinstance(pool, dict) else []
@@ -514,7 +565,8 @@ def _salad_compute(account_id):
                 mid = str(inst.get("machine_id") or "")
                 w = watch.get(f"{nm}:{iid}") or {}
                 pw = pool_match(mid) or pool_worker(nm)
-                gpu = pgpu(pw) or (w.get("gpu") or "").strip() or "?"
+                gc = str(gpu_cache.get(iid) or "").replace("NVIDIA GeForce ", "").strip()
+                gpu = gc or pgpu(pw) or (w.get("gpu") or "").strip() or "?"
                 hr = w.get("last_hashrate_th")
                 if hr is None:
                     hr = phr(pw)
@@ -705,6 +757,41 @@ def _refresh_loop():
         except Exception:
             pass
         time.sleep(REFRESH_INTERVAL)
+
+
+_portal_thread = None
+
+def start_portal_manager():
+    """启动常驻 headless Playwright 线程抓 salad portal gpu_class + 余额。
+    无 salad 会话文件 / playwright 缺失 → 静默跳过(salad 走回退)。"""
+    global _portal_thread
+    try:
+        import salad_portal
+    except Exception:
+        return
+    accounts = []
+    for acct in list_accounts():
+        if platform_of(acct) != "salad":
+            continue
+        sp = salad_portal.session_path(acct)
+        if not sp.exists():
+            continue
+        scfg = read_config(acct).get("salad", {}) or {}
+        accounts.append({"account": acct,
+                         "org": scfg.get("organization_name"),
+                         "project": scfg.get("project_name") or "default",
+                         "session_path": str(sp)})
+    if not accounts:
+        return
+    stop = threading.Event()  # daemon 线程随进程退出; 保留以满足 run_manager 接口
+    def _loop():
+        try:
+            salad_portal.run_manager(accounts, PORTAL_REFRESH_INTERVAL,
+                                     salad_group_names, _portal_update, stop)
+        except Exception:
+            pass
+    _portal_thread = threading.Thread(target=_loop, daemon=True)
+    _portal_thread.start()
 
 
 # ---------- 累计产出(自看板起算) ----------
@@ -984,6 +1071,11 @@ def build_rentals():
         bal = platform_balance(acct)
         burn = sum(float(m.get("price") or 0) for m in items)
         estimated = False
+        real = False
+        if plat == "salad":                      # salad: portal 真实余额优先于手填估算
+            rb = salad_real_balance(acct)
+            if rb is not None:
+                bal, real = rb, True
         if bal is None and cfg.get("balance_usd") is not None:  # 无 API 余额时用手填值按消耗估算
             try:
                 asof = iso_to_epoch(cfg.get("balance_asof")) or now
@@ -993,7 +1085,8 @@ def build_rentals():
                 bal = None
         res[acct]["balance"] = bal
         res[acct]["balance_estimated"] = estimated
-        res[acct]["balance_editable"] = plat in NO_BALANCE_API  # 无 API 的平台允许总览内联手填
+        res[acct]["balance_real"] = real          # True=portal 实时余额(salad), 前端标「实时余额」
+        res[acct]["balance_editable"] = (plat in NO_BALANCE_API) and not real  # 无 API 平台手填; salad 有 portal 实时余额时隐藏手填(手填仅 portal 断连/未登录时回退)
         res[acct]["balance_usd"] = cfg.get("balance_usd")        # 原始手填值, 供编辑框预填
         res[acct]["burn_hourly"] = round(burn, 4)
         res[acct]["hours_left"] = round(bal / burn, 1) if (bal is not None and burn > 0) else None
@@ -1711,7 +1804,7 @@ let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[])
 let poolName=q=>q=='twpool'?'TW Pool':(q=='pearlhash'?'PearlHash':'未知');
 let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
-let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
+let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':(v.balance_real?'实时余额':'余额');balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
 let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
 
@@ -2154,6 +2247,7 @@ def main():
     CONTROL_DIR.mkdir(exist_ok=True)
     threading.Thread(target=spend_loop, daemon=True).start()
     threading.Thread(target=_refresh_loop, daemon=True).start()  # 后台预热缓存, 请求只读缓存不阻塞
+    start_portal_manager()  # 常驻 headless 抓 salad portal GPU/余额(无会话/无 playwright 则静默跳过)
     port = int(CONF.get("port", 8787))
     srv = ThreadingHTTPServer(("0.0.0.0", port), H)
     print(f"pearl dashboard on http://0.0.0.0:{port}  (user={CONF.get('user','admin')})", flush=True)
