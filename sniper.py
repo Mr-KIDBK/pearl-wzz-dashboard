@@ -734,7 +734,7 @@ def reconcile_vast_hashrate(config, state, rented, inst, contract_id, age):
     if hashrate_th is None:
         worker = make_worker(config, "vast", rented.get("gpu"), rented.get("external_id"))
         try:
-            info = lookup_worker(pearl_worker_hashrates(config), worker)
+            info = lookup_worker(merged_worker_hashrates(config), worker)
         except Exception as exc:
             log(f"Vast PearlHash worker check failed: contract={contract_id} worker={worker} error={type(exc).__name__}: {exc}")
             info = None
@@ -1231,7 +1231,7 @@ def reconcile_runpod_instances(config, state):
         rented["hashrate_last_check_epoch"] = now_ts
         if worker_hashrates is None:
             try:
-                worker_hashrates = pearl_worker_hashrates(config)
+                worker_hashrates = merged_worker_hashrates(config)
                 worker_api_failed = False
             except Exception as exc:
                 log(f"RunPod PearlHash worker check failed: {type(exc).__name__}: {exc}")
@@ -2442,7 +2442,7 @@ def run_salad_cycle(config, state, live):
     worker_hashrates = {}
     if use_worker_fallback:
         try:
-            worker_hashrates = pearl_worker_hashrates(config)
+            worker_hashrates = merged_worker_hashrates(config)
         except Exception as exc:
             log(f"Salad PearlHash worker check failed: {type(exc).__name__}: {exc}")
     # 按型号判健康: 从矿池按 machine_id 解析每台真实 GPU, 取该型号的 min_hashrate_th 门槛
@@ -2451,7 +2451,7 @@ def run_salad_cycle(config, state, live):
     def _pool_workers():
         if _pool_cache["workers"] is None:
             try:
-                _pool_cache["workers"] = pearl_worker_hashrates(config)
+                _pool_cache["workers"] = merged_worker_hashrates(config)
             except Exception as exc:
                 log(f"Salad pool lookup failed: {type(exc).__name__}: {exc}")
                 _pool_cache["workers"] = {}
