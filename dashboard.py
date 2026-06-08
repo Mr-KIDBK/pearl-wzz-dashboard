@@ -1559,7 +1559,14 @@ async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产�
 
 async function renderOverview(){if(EDITING)return;let d,r;try{let pv=localStorage.getItem('pool_view')||'merged';d=await api('/api/summary?pool='+encodeURIComponent(pv));r=await api('/api/rentals')}catch(e){return}
 if(ROLE=='admin'){let _ce=document.getElementById('cfaccts');if(_ce)_ce.innerHTML=Object.keys(r).map(a=>`<div class="ni sub adm${(view=='cf'&&subtab==a)?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc((r[a]&&r[a].label)||a)}</div>`).join('');}
-let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
+let phUrl='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
+let twUrl='https://tw-pool.com/workers/'+encodeURIComponent(d.wallet);
+let pvk=d.pool_view||'merged';
+let poolLinks=pvk=='pearlhash'
+  ? `<div class=go onclick="window.open('${phUrl}','_blank')">PearlHash →</div>`
+  : pvk=='twpool'
+  ? `<div class=go onclick="window.open('${twUrl}','_blank')">TW Pool →</div>`
+  : `<div class=go onclick="window.open('${phUrl}','_blank')">PearlHash →</div><div class=go onclick="window.open('${twUrl}','_blank')">TW Pool →</div>`;
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
@@ -1584,7 +1591,7 @@ document.getElementById('ov').innerHTML=`
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
 <div class=row style=flex-shrink:0;gap:8px>
 <button class=b-mini onclick="copyAddr('${esc(d.wallet)}')">复制</button>
-<div class=go onclick="window.open('${acct}','_blank')">PearlHash →</div>
+${poolLinks}
 <select id=poolView onchange="setPoolView(this.value)" title="切换显示的矿池(仅显示, 不影响挖矿)"><option value=merged>合并</option><option value=pearlhash>PearlHash</option><option value=twpool>TW Pool</option></select></div></div>
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
