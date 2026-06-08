@@ -426,13 +426,18 @@ POOLS = {
                   "reads_prl_host": False},
 }
 
+def _raw_pool(config):
+    """读取并规范化 config 中的原始 pool 字符串。"""
+    return str((config or {}).get("pool") or "").strip()
+
 def active_pool(config):
-    p = str((config or {}).get("pool") or "").strip()
+    """从 config 读 pool, 返回 POOLS 中的有效 key; 未知/未配默认返回 'pearlhash'。"""
+    p = _raw_pool(config)
     return p if p in POOLS else "pearlhash"
 
 def effective_image(config):
-    """新抢机器用的镜像: 优先按 active_pool 的镜像; pool 未知/未配则回退 config['image']。"""
-    p = str((config or {}).get("pool") or "").strip()
+    """新抢机器用的镜像: 优先按配置的 pool 镜像; pool 未知/未配则回退 config['image']。"""
+    p = _raw_pool(config)
     if p in POOLS:
         return POOLS[p]["image"]
     return (config or {}).get("image")
