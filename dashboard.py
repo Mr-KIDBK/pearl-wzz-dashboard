@@ -1690,7 +1690,7 @@ function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%36
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
 async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
-async function renderOverview(){if(EDITING)return;let d,r;try{let pv=localStorage.getItem('pool_view')||'merged';d=await api('/api/summary?pool='+encodeURIComponent(pv));r=await api('/api/rentals')}catch(e){return}
+async function renderOverview(){if(EDITING)return;let d,r,pv;try{pv=localStorage.getItem('pool_view')||'merged';d=await api('/api/summary?pool='+encodeURIComponent(pv));r=await api('/api/rentals')}catch(e){return}
 if(ROLE=='admin'){let _ce=document.getElementById('cfaccts');if(_ce)_ce.innerHTML=Object.keys(r).map(a=>`<div class="ni sub adm${(view=='cf'&&subtab==a)?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc((r[a]&&r[a].label)||a)}</div>`).join('');}
 let phUrl='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let twUrl='https://tw-pool.com/workers/'+encodeURIComponent(d.wallet);
