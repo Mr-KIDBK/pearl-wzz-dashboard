@@ -2,6 +2,18 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [配置页矿池澄清 + 迁移下拉] — 2026-06-08
+
+消除多矿池相关的配置困惑,迁移目标改下拉选择。
+
+### Added / Changed
+- **COMMON 全局配置加只读「矿池参考」区**:列出每个池用的镜像 + 是否读 PRL_HOST(PearlHash → kuzigmgm 读 PRL_HOST;TW Pool → conishc 不读 host)。说明「镜像由所选矿池自动决定,切池/迁移无需改 image/prl_host」。
+- **image / prl_host 字段加灰字标注**:image「仅未选矿池时兜底」、prl_host「仅 PearlHash 读, TW Pool 不读」——澄清这俩是 pearlhash 兜底值,换池不用改。
+- **一键全部账号迁移改池下拉**:按钮旁加矿池下拉(PearlHash / TW Pool),不再手填池名;MIGRATE 确认保留。
+- `build_full_config` 的 `pools` 列表补 `image`/`reads_prl_host` 字段(供前端矿池参考区用)。
+
+---
+
 ## [总览矿池显示切换] — 2026-06-08
 
 总览页加矿池显示切换下拉,迁移期间混合机群可按池查看。纯显示,不影响挖矿/配置/迁移。
