@@ -116,5 +116,13 @@ S.migrate_salad_group=lambda *a,**k: calledp.append(1)
 S.migrate_account(cfgs4,{"rented":{}},"salad","twpool",live=False)
 ck("salad live=False 不调 PATCH", len(calledp)==0)
 
+# salad list 失败: 记 error 不中断
+cfgs5={"prl_address":ADDR,"prl_host":HOST,"runpod":{"enabled":False},"vast":{"enabled":False},"salad":{"enabled":True}}
+def list_boom(cfg): raise RuntimeError("salad list down")
+S.list_salad_container_groups=list_boom
+rs5=S.migrate_account(cfgs5,{"rented":{}},"salad","twpool",live=True)
+ck("salad list 失败记 error", any(x["platform"]=="salad" and x["action"]=="list" and not x["ok"] for x in rs5["results"]))
+ck("salad list 失败整体仍 ok=True", rs5.get("ok") is True)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")

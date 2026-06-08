@@ -919,6 +919,9 @@ def migrate_account(config, state, account_id, target_pool, live=True):
                     migrate_salad_group(config, gname, image, env)
                     for inst in (list_salad_instances(config, gname) or []):
                         iid = inst.get("instance_id") or inst.get("id")
+                        if not iid:
+                            log(f"migrate salad {gname}: instance missing id, skip recreate")
+                            continue
                         try:
                             recreate_salad_instance(config, gname, iid)
                         except Exception as exc2:
@@ -2392,7 +2395,10 @@ def reallocate_salad_instance(config, group_name, instance_id):
 def migrate_salad_group(config, group_name, image, env):
     """迁移一个 salad 容器组: PATCH 改 container.image + environment_variables(整体替换) → Salad 异步应用并自动重建实例。
     实测确认(2026-06-08): merge-patch 对 environment_variables 是整体替换, 故须传完整 env。"""
-    headers = dict(salad_headers() or {})
+    headers = salad_headers()
+    if not headers:
+        raise RuntimeError("SALAD_API_KEY is not set")
+    headers = dict(headers)
     headers["Content-Type"] = "application/merge-patch+json"
     group = urllib.parse.quote(str(group_name))
     body = {"container": {"image": image, "environment_variables": env}}
@@ -2402,6 +2408,8 @@ def migrate_salad_group(config, group_name, image, env):
 def recreate_salad_instance(config, group_name, instance_id):
     """显式重建一个 salad 实例以应用新镜像(保守; Salad PATCH 后通常已自动重建, 此为兜底)。"""
     headers = salad_headers()
+    if not headers:
+        raise RuntimeError("SALAD_API_KEY is not set")
     group = urllib.parse.quote(str(group_name))
     inst = urllib.parse.quote(str(instance_id))
     return request_json("POST", salad_url(config, f"/containers/{group}/instances/{inst}/recreate"), headers, None, timeout=30)
