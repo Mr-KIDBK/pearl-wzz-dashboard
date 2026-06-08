@@ -10,6 +10,8 @@ def ck(n,c):
 D.prl_address=lambda: "prl1pX"
 D.pool_data=lambda force=False: {"balance":10.0,"connected_workers":[]}
 D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{}}
+# build_summary 现在调 build_rentals; mock 返回空→running=0, running_by_pool 全零
+D.build_rentals=lambda: {}
 D.pool_view=lambda which: {
   "pearlhash":{"workers":[{"name":"wph","th":250.0,"ip":"1","gpus":[]}],"total_hashrate_th":250.0,"pool_balance":10.0,"pool_error":None},
   "twpool":{"workers":[{"name":"gpu10","th":140.0,"ip":None,"gpus":[]}],"total_hashrate_th":140.0,"pool_balance":5.0,"pool_error":None},

@@ -871,12 +871,19 @@ def _is_running(machine):
 def build_summary(pool_key="merged"):
     pool_key = pool_key if pool_key in ("pearlhash", "twpool", "merged") else "merged"
     pv = pool_view(pool_key)
+    rentals = build_rentals()
     per_plat, running = {}, 0
-    for acct in list_accounts():
-        n = sum(1 for m in active_rentals(acct) if _is_running(m))  # 只数真正在跑(salad 排除创建/下载中)
+    rbp = {"pearlhash": 0, "twpool": 0, "unknown": 0}
+    for acct, info in rentals.items():
         plat = platform_of(acct)
-        per_plat[plat] = per_plat.get(plat, 0) + n
-        running += n
+        for m in info.get("machines", []):
+            if not _is_running(m):
+                continue
+            running += 1
+            per_plat[plat] = per_plat.get(plat, 0) + 1
+            key = m.get("pool") or "unknown"
+            rbp[key] = rbp.get(key, 0) + 1
+    running_machines = running if pool_key == "merged" else rbp.get(pool_key, 0)
     stats = read_json(STATS_PATH, {})
     cp = coin_price()
     rent_usd = round(float(stats.get("cumulative_usd", 0.0)), 4)
@@ -892,7 +899,8 @@ def build_summary(pool_key="merged"):
     output_usd = round(output * cp, 2)       # 折合 USD
     return {
         "wallet": prl_address(),
-        "running_machines": running,
+        "running_machines": running_machines,
+        "running_by_pool": rbp,
         "running_by_platform": per_plat,
         "total_hashrate_th": pv["total_hashrate_th"],
         "workers": pv["workers"],
@@ -1659,6 +1667,7 @@ let poolLinks=pvk=='pearlhash'
   : `<div class=go onclick="window.open('${phUrl}','_blank')">PearlHash →</div><div class=go onclick="window.open('${twUrl}','_blank')">TW Pool →</div>`;
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
+let rbp=d.running_by_pool||{}; let poolBreak='PearlHash '+(rbp.pearlhash||0)+' / TW Pool '+(rbp.twpool||0)+(rbp.unknown?(' / 未知 '+rbp.unknown):'');
 let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
 let pbasis=d.produced_basis||'mixed';
 let plabel=pbasis=='since_reset'?('自重置起算'+(ssl?(' (统计自 '+ssl+')'):'')):(pbasis=='all_time'?'全期(已付+未付)':'PearlHash 自重置 + TW Pool 全期');
@@ -1669,13 +1678,16 @@ let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_runni
 let balTxt;if(v.balance!=null){let t=(v.hours_left!=null)?('约 '+fnum(v.hours_left,1)+'h 花完'):(v.burn_hourly>0?'':'当前无消耗');let lab=v.balance_estimated?'估算余额':'余额';balTxt=`${lab} $${fnum(v.balance,2)}${t?' · '+t:''}`;}else{balTxt='余额 —';}
 let bh;if(v.balance_editable){BALVAL[aid]=(v.balance_usd!=null?v.balance_usd:'');bh=`<span class="bal editable" id="bal_${esc(aid)}" onclick="editBal('${esc(aid)}')" title="点击填写/修改余额(此平台无余额 API, 手动维护)">${balTxt} <span class=ed-pen>✎</span></span>`;}else{bh=`<span class=bal>${balTxt}</span>`;}
 let sstat='';if(p=='salad'){let s=v.salad_status||{};let pr=[];if(s.running_count!=null)pr.push('运行 '+s.running_count);if(s.allocating_count)pr.push('分配中 '+s.allocating_count);let gc=(v.salad_gpu_classes||[]).join(' / ');let serr=(v.salad_error&&!(v.machines||[]).length)?' · '+esc(v.salad_error):'';sstat=`<div class=muted style=margin-bottom:9px>SALAD 实时 · ${pr.join(' · ')||'-'}${gc?' · GPU 档 '+esc(gc):''}${serr}</div>`;}
-let rows=(v.machines||[]).map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
+let poolName=p=>p=='twpool'?'TW Pool':(p=='pearlhash'?'PearlHash':'未知');
+let mlist=(v.machines||[]).filter(m=>pv=='merged'||m.pool==pv);
+let acctBurn=mlist.reduce((s,m)=>s+(parseFloat(m.price)||0),0);
+let rows=mlist.map(m=>{let a=(ROLE=='admin'&&m.id)?`<button class=b-bad onclick="term('${aid}','${p}','${esc(m.id)}','${esc(m.group||'')}')">关闭</button>`:'';
 
 let price=m.price_label?esc(m.price_label):(m.price==null?'-':'$'+fnum(m.price,3)+'/h');
 let gpu=(m.gpu&&m.gpu!='?')?esc(m.gpu):'<span class=muted>—</span>';
-return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?7:6} class=muted>无在跑机器</td></tr>`;
-plat+=`<div class=platbox><div class=top><b>${esc(v.label||aid)}</b>${badges}${bh}</div>${sstat}
-<table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th></th></tr>${rows}</table></div>`;}
+return `<tr>${p=='salad'?('<td>'+esc(m.group||'')+'</td>'):''}<td>${esc(m.id)}</td><td>${gpu}</td><td>${price}</td><td>${dur(m.duration_seconds)}</td><td>${m.hashrate_th==null?'<span class=muted>—</span>':fnum(m.hashrate_th)+' TH/s'}</td><td>${poolName(m.pool)}</td><td>${a}</td></tr>`;}).join('')||`<tr><td colspan=${p=='salad'?8:7} class=muted>无符合机器</td></tr>`;
+plat+=`<div class=platbox><div class=top><b>${esc(v.label||aid)}</b>${badges}${bh}<span class=muted style="font-size:11px;margin-left:8px">$${fnum(acctBurn,3)}/h${pv!='merged'?' ('+poolName(pv)+')':''}</span></div>${sstat}
+<table><tr>${p=='salad'?'<th>组</th>':''}<th>实例</th><th>GPU</th><th>单价</th><th>时长</th><th>算力</th><th>矿池</th><th></th></tr>${rows}</table></div>`;}
 document.getElementById('ov').innerHTML=`
 <div class="card wallet">
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
@@ -1684,7 +1696,7 @@ document.getElementById('ov').innerHTML=`
 ${poolLinks}
 <select id=poolView onchange="setPoolView(this.value)" title="切换显示的矿池(仅显示, 不影响挖矿)"><option value=merged>合并</option><option value=pearlhash>PearlHash</option><option value=twpool>TW Pool</option></select></div></div>
 <div class=cards>
-<div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
+<div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${pv=='merged'?poolBreak:esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
 <div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自重置起算</div></div>
 <div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · ${plabel} @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div></div>
