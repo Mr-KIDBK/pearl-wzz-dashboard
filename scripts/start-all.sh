@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p logs
 set -a; [ -f .env ] && . ./.env; set +a
+unset VIRTUAL_ENV 2>/dev/null || true   # 让 uv 干净使用项目 .venv(忽略外部 stray 变量)
 
 std_var_for() {  # 平台 → sniper 期望的标准 key 环境变量名
   case "$1" in
@@ -30,9 +31,9 @@ start_account() {  # $1=platform(salad/runpod/...)  $2=account_id(salad/salad-2/
   [ -z "$key_env" ] && key_env="$std"
   local key_val="${!key_env:-}"
   if [ -z "$key_val" ]; then echo "  ⚠  ${acct}: ${key_env} 在 .env 为空/未设置, 跳过"; return; fi
-  # 关键: 把账号 key 注入成标准变量名, 直接调 python3 sniper.py(不经过会 source .env 覆盖 key 的 run-*.sh)
+  # 关键: 把账号 key 注入成标准变量名, 经 uv run 用项目 .venv 跑 sniper.py(不经过会 source .env 覆盖 key 的 run-*.sh)
   env "$std=$key_val" SNIPER_LOG_PATH="logs/${acct}.log" SNIPER_STATE_PATH="state.${acct}.json" \
-    nohup python3 sniper.py --config "$cfg" --live >/dev/null 2>>"logs/${acct}.log" </dev/null &
+    nohup uv run python sniper.py --config "$cfg" --live >/dev/null 2>>"logs/${acct}.log" </dev/null &
   echo "  ✅ ${acct} 启动 (pid $!, key=${key_env}) → logs/${acct}.log"
 }
 

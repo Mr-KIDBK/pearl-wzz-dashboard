@@ -23,7 +23,10 @@
 只有**一个配置文件 `.env`**(平台 API key + 看板登录都在里面),**一条命令起 / 停全部服务**。
 
 ```bash
-# 0. 依赖: 只需 Python 3.10+(纯标准库,无需 pip,也不需要 byobu)
+# 0. 依赖: 用 uv 管理(core 纯标准库; salad GPU/余额功能需 playwright)
+#    装 uv: brew install uv     # 或 curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync                          # 按 pyproject.toml 建 .venv(Python 见 .python-version) + 装依赖
+# (可选) salad GPU/单价/真实余额: uv run playwright install chromium  + 见文末章节
 
 # 1. 复制模板(真实文件已被 .gitignore 保护)
 cp .env.example .env
@@ -103,8 +106,8 @@ bash scripts/stop-all.sh && bash scripts/start-all.sh        # 重启, 看板自
 
 salad 迁 twpool 后, 公共 API 不再提供 GPU 型号。开启后用浏览器会话从 portal-api 抓真实 `gpu_class` + 信用余额:
 
-1. 装依赖: `pip install -r requirements.txt && playwright install chromium`
-2. 一次性登录(有头, 每个 salad 账号一个隔离窗口): `python3 salad_login.py`
+1. 装依赖: `uv sync && uv run playwright install chromium`
+2. 一次性登录(有头, 每个 salad 账号一个隔离窗口): `uv run python salad_login.py`
    - 在弹出的窗口里登录对应账号(过 Turnstile/OTP), 完成后回终端按回车保存会话。
    - 会话存到 `secrets/salad_session_<账号>.json`(已 gitignore, 切勿提交)。
 3. 重启 dashboard。常驻 headless 浏览器会自动续 Cloudflare 通行证并定时刷新 GPU/余额。

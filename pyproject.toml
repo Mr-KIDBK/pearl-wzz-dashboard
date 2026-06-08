@@ -1,0 +1,14 @@
+[project]
+name = "pearl-wzz-dashboard"
+version = "0.1.0"
+description = "今晚挖珍珠 // PEARL_SNIPER: 多平台 GPU 自动租用 + 监控看板(stdlib + 可选 playwright)"
+requires-python = ">=3.11"
+dependencies = [
+    # 仅 salad portal-api 会话抓取(GPU/单价/真实余额)需要; 其余功能纯标准库零依赖。
+    # 装浏览器二进制: uv run playwright install chromium
+    "playwright>=1.40",
+]
+
+[tool.uv]
+# 脚本式应用(顶层 *.py, 非可安装包): uv 只管理 .venv 与依赖, 不打包自身。
+package = false

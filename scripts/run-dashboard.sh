@@ -7,4 +7,5 @@ if [ -f .env ]; then
   . ./.env
   set +a
 fi
-exec python3 dashboard.py
+unset VIRTUAL_ENV 2>/dev/null || true   # 让 uv 干净使用项目 .venv(忽略外部 stray 变量)
+exec uv run python dashboard.py

@@ -6,4 +6,5 @@ if [ -f .env ]; then
   . ./.env
   set +a
 fi
-python3 sniper.py --config configs/config.tensordock.json "$@"
+unset VIRTUAL_ENV 2>/dev/null || true   # 让 uv 干净使用项目 .venv
+exec uv run python sniper.py --config configs/config.tensordock.json "$@"

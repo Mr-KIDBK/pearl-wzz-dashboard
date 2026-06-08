@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """一次性: 有头登录各 salad 账号, 保存浏览器会话到 secrets/(供 dashboard 常驻 headless 复用)。
-用法: python3 salad_login.py
-依赖: pip install -r requirements.txt && playwright install chromium"""
+用法: uv run python salad_login.py
+依赖(项目 uv 管理): uv sync && uv run playwright install chromium"""
 import dashboard as D
 import salad_portal
 

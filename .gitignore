@@ -22,6 +22,9 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# === uv 虚拟环境(由 pyproject.toml + uv.lock 重建, 勿提交) ===
+.venv/
+
 # 文档全部本地保留, 不随仓库分发
 docs/
 
