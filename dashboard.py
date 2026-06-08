@@ -269,6 +269,39 @@ def twpool_data(force=False):
     return data
 
 
+_machine_images = {}  # account -> {"data": {machine_id: image}, "ts": ts}
+
+def account_machine_images(acct, force=False):
+    """runpod/vast 账号: live 拉每台机器当前镜像 {machine_id(str): image}。serve-stale 缓存; 失败返回 {}。
+    注入该账号 key(同 do_terminate)。salad 不走这里(镜像由 salad_live 组信息提供)。"""
+    import sniper as S
+    now = time.time()
+    slot = _machine_images.get(acct)
+    if slot and not force and (now - slot["ts"] < POOL_STALE_MAX):
+        return slot["data"]
+    plat = platform_of(acct)
+    data = {}
+    try:
+        kv = read_env().get(key_var_for(acct), "")
+        std = KEYNAME.get(plat, "")
+        if kv and std:
+            os.environ[std] = kv
+        if plat == "runpod":
+            for p in (S.list_runpod_pods() or []):
+                pid = str(p.get("id") or "")
+                if pid:
+                    data[pid] = p.get("imageName")
+        elif plat == "vast":
+            for i in (S.list_vast_instances() or []):
+                iid = str(i.get("id") or "")
+                if iid:
+                    data[iid] = i.get("image")
+    except Exception:
+        data = {}
+    _machine_images[acct] = {"data": data, "ts": now}
+    return data
+
+
 def pool_of_image(image):
     """按镜像判定矿池: twpool 镜像→'twpool'; 其它非空→'pearlhash'; 空→None(交兜底)。"""
     s = str(image or "").lower()
@@ -489,7 +522,8 @@ def _salad_compute(account_id):
                                          "state": inst.get("state"),
                                          "started_epoch": iso_to_epoch(inst.get("update_time")),
                                          "price": inst_price_num(gpu),
-                                         "price_label": inst_price(gpu), "hashrate_th": hr})
+                                         "price_label": inst_price(gpu), "hashrate_th": hr,
+                                         "image": (g.get("container") or {}).get("image")})
             if not insts:  # /instances 失败/为空时, 用矿池 salad worker 兜底显示
                 for w in pool_workers:
                     wn = str(w.get("worker_name") or "")
@@ -646,6 +680,8 @@ def _refresh_once():
         try:
             if platform_of(acct) == "salad":
                 salad_live(acct, force=True)
+            elif platform_of(acct) in ("runpod", "vast"):
+                account_machine_images(acct, force=True)
             platform_balance(acct, force=True)
         except Exception:
             pass
