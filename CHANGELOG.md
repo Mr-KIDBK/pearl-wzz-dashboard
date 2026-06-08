@@ -2,6 +2,27 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [多矿池可切换 + 一键迁移] — 2026-06-08
+
+支持 PearlHash / TW Pool 多矿池:双池监控避免混合机群误杀、可配置默认抢哪个池、UI 一键把现有 vast/runpod/salad 机器迁移到目标池。架构可扩展到更多池。所有第三方迁移接口均经真机/官方源码实测确认后才实现。
+
+### Added — 新增
+- **矿池注册表 `POOLS`**(sniper.py):pearlhash(`kuzigmgm/pearl-miner:v11`,读 PRL_HOST)/ twpool(`conishc/pearl-miner:twpool-v1.9.0-auto`,池写死、读 PRL_ADDRESS/PRL_WORKER)。加新池 = 加一条 registry + 一个 `*_worker_hashrates` adapter。`active_pool()` / `effective_image()` 决定新抢机器用的镜像。
+- **双池监控(安全层)**:`twpool_worker_hashrates`(实测 `api.tw-pool.com/api/worker_stats`)+ `merged_worker_hashrates`(按 worker 名合并取最大、单池故障跳过)。runpod/vast/salad reconcile 改用合并算力 → 混合机群(部分在 pearlhash、部分在 twpool)算力都查得到,**不误杀**。
+- **新抢矿池可切换**:每账号配置 `pool`(顶层),create 用 `effective_image`;配置页每账号矿池下拉(`/api/set-pool`,只改新抢、不迁移)。
+- **一键迁移**(`/api/migrate`,确认词 `MIGRATE` 严格校验):
+  - **runpod**:`POST /v1/pods/{id}/update` 原地换 imageName+env 触发 reset(实测确认 env 整体替换)。
+  - **vast**:`DELETE` 销毁,扫描循环用新池镜像重租。
+  - **salad**:`PATCH containers/{group}`(merge-patch+json)改 image+env(整体替换)→ Salad 自动重建实例 + 保守显式 recreate(实测 group gpu10 迁移成功)。
+  - UI:每账号「迁移现有机器到所选池」按钮 + 全局「一键全部账号迁移」按钮,均经 `MIGRATE` 确认 prompt。
+- **host 兜底池感知**:twpool 不读 PRL_HOST → 切 host 无意义,迁移到 twpool 后自动禁用 host 兜底。
+
+### Notes — 注意
+- 迁移只改现有机器 + 落盘 pool;**新抢用新池需重启对应账号监控才生效**。
+- salad 现役镜像为 `mrkidbk/pearl-miner:latest`(用 `WORKER_NAME`),迁移取 `salad_group_worker_name` 沿用 worker 名。
+
+---
+
 ## [行情图表 + 实时币价] — 2026-06-05
 
 ### Added
