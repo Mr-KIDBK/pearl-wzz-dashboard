@@ -1743,13 +1743,18 @@ return `<div class=lbl>全局配置 · COMMON</div>
 <div class=platbox><div class=top><b>COMMON</b><span class=muted>当前值取自 vast · 保存会写入全部 4 个 config(覆盖各平台同名字段)</span></div>
 <div class=grid2>
 ${cf('prl_address','钱包地址 prl_address',1,'你的 $pearl 钱包, 否则挖给别人')}
-${cf('prl_host','矿池 prl_host',0,'84.32.220.219:9000')}
+${cf('prl_host','矿池 prl_host <span class=muted style="font-size:11px;font-weight:400">· 仅 PearlHash 读, TW Pool 不读</span>',0,'84.32.220.219:9000')}
 ${cf('worker_prefix','worker 前缀',0,'auto')}
-${cf('image','矿机镜像 image',0,'docker.io/kuzigmgm/pearl-miner:v11')}
+${cf('image','矿机镜像 image <span class=muted style="font-size:11px;font-weight:400">· 仅未选矿池时兜底</span>',0,'docker.io/kuzigmgm/pearl-miner:v11')}
 ${cf('max_active_instances','最多同时租 (台)',0,'1')}
 ${cf('max_total_hourly_usd','总时租上限 ($/h)',0,'1.0')}
 ${cf('alert_url','告警 URL (可空)',0,'ntfy 等')}
-</div><div class=row style=margin-top:12px><button class=b-acc onclick=saveCommon()>保存全局配置</button>
+</div>
+<div class=lbl style=margin-top:14px>矿池参考 <span class=muted style="font-size:11px;font-weight:400">· 镜像由所选矿池自动决定, 切池/迁移无需改上面的 image/prl_host</span></div>
+<div style="font-size:12px;color:var(--mut);line-height:1.9">
+${(d.pools||[]).map(o=>`<div>• <b>${esc(o.label)}</b> → 镜像 <code style="font-size:11px">${esc(o.image||'')}</code> · ${o.reads_prl_host?'读 PRL_HOST(连上方 prl_host)':'不读 host(池写死在镜像内)'}</div>`).join('')}
+</div>
+<div class=row style=margin-top:12px><button class=b-acc onclick=saveCommon()>保存全局配置</button>
 <span class=hint>保存后各平台需「重启应用」生效</span></div></div>
 <div class=platbox><div class=top><b>账户 · 看板登录</b></div>
 <div class=grid2>
