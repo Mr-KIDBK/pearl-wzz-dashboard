@@ -901,6 +901,32 @@ def migrate_account(config, state, account_id, target_pool, live=True):
             except Exception as exc:
                 log(f"migrate vast instance {iid} failed: {type(exc).__name__}: {exc}")
                 results.append({"platform": "vast", "id": iid, "action": "destroy", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    # --- salad: PATCH 容器组镜像 + 重建实例 ---
+    if (config.get("salad") or {}).get("enabled"):
+        try:
+            groups = list_salad_container_groups(config)
+        except Exception as exc:
+            groups = []
+            results.append({"platform": "salad", "id": None, "action": "list", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        for g in groups:
+            gname = g.get("name")
+            worker = salad_group_worker_name(g) or gname
+            env = {"PRL_ADDRESS": config["prl_address"], "PRL_WORKER": worker}
+            if reads_host:
+                env["PRL_HOST"] = config["prl_host"]
+            try:
+                if live:
+                    migrate_salad_group(config, gname, image, env)
+                    for inst in (list_salad_instances(config, gname) or []):
+                        iid = inst.get("instance_id") or inst.get("id")
+                        try:
+                            recreate_salad_instance(config, gname, iid)
+                        except Exception as exc2:
+                            log(f"migrate salad recreate {gname}/{iid} failed (auto-recreate 兜底): {type(exc2).__name__}: {exc2}")
+                results.append({"platform": "salad", "id": gname, "action": "patch+recreate", "ok": True, "error": None})
+            except Exception as exc:
+                log(f"migrate salad group {gname} failed: {type(exc).__name__}: {exc}")
+                results.append({"platform": "salad", "id": gname, "action": "patch", "ok": False, "error": f"{type(exc).__name__}: {exc}"})
     try:
         reset_low_eff_timers(state)
     except Exception as exc:
@@ -908,6 +934,7 @@ def migrate_account(config, state, account_id, target_pool, live=True):
     summary = {
         "runpod": sum(1 for r in results if r["platform"] == "runpod" and r["ok"]),
         "vast": sum(1 for r in results if r["platform"] == "vast" and r["ok"]),
+        "salad": sum(1 for r in results if r["platform"] == "salad" and r["ok"]),
         "failed": sum(1 for r in results if not r["ok"]),
     }
     return {"ok": True, "account_id": account_id, "target_pool": target_pool, "results": results, "summary": summary}
@@ -2360,6 +2387,24 @@ def reallocate_salad_instance(config, group_name, instance_id):
     group = urllib.parse.quote(str(group_name))
     inst = urllib.parse.quote(str(instance_id))
     return request_json("POST", salad_url(config, f"/containers/{group}/instances/{inst}/reallocate"), headers, timeout=30)
+
+
+def migrate_salad_group(config, group_name, image, env):
+    """迁移一个 salad 容器组: PATCH 改 container.image + environment_variables(整体替换) → Salad 异步应用并自动重建实例。
+    实测确认(2026-06-08): merge-patch 对 environment_variables 是整体替换, 故须传完整 env。"""
+    headers = dict(salad_headers() or {})
+    headers["Content-Type"] = "application/merge-patch+json"
+    group = urllib.parse.quote(str(group_name))
+    body = {"container": {"image": image, "environment_variables": env}}
+    return request_json("PATCH", salad_url(config, f"/containers/{group}"), headers, body, timeout=30)
+
+
+def recreate_salad_instance(config, group_name, instance_id):
+    """显式重建一个 salad 实例以应用新镜像(保守; Salad PATCH 后通常已自动重建, 此为兜底)。"""
+    headers = salad_headers()
+    group = urllib.parse.quote(str(group_name))
+    inst = urllib.parse.quote(str(instance_id))
+    return request_json("POST", salad_url(config, f"/containers/{group}/instances/{inst}/recreate"), headers, None, timeout=30)
 
 
 def iso_millis_utc(ts):

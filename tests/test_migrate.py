@@ -66,5 +66,55 @@ ck("live=False 不调 update", len(called)==0)
 # --- 未知 pool 拒绝 ---
 ck("未知 pool 返回 error", bool(S.migrate_account({"runpod":{"enabled":True}},{},"x","zzz",live=True).get("error")))
 
+# ============ salad 迁移 ============
+# salad 账号迁移到 twpool: 每组 PATCH 镜像+env, recreate 运行实例
+cfgs={"prl_address":ADDR,"prl_host":HOST,"runpod":{"enabled":False},"vast":{"enabled":False},"salad":{"enabled":True}}
+S.list_runpod_pods=lambda:[]
+S.list_vast_instances=lambda:[]
+S.list_salad_container_groups=lambda cfg:[
+    {"name":"gpu1","container":{"environment_variables":{"WORKER_NAME":"gpu1"}}},
+    {"name":"gpu2","container":{"environment_variables":{"PRL_WORKER":"gpu2"}}},
+]
+patched=[]
+S.migrate_salad_group=lambda cfg,gname,image,env: patched.append((gname,image,dict(env)))
+S.list_salad_instances=lambda cfg,gname:[{"instance_id":f"inst-{gname}","state":"running"}]
+recreated=[]
+S.recreate_salad_instance=lambda cfg,gname,iid: recreated.append((gname,iid))
+S.reset_low_eff_timers=lambda st: 0
+rs=S.migrate_account(cfgs,{"rented":{}},"salad","twpool",live=True)
+ck("salad 两组都 PATCH", len(patched)==2)
+ck("salad PATCH 用 twpool 镜像", all(p[1]==S.POOLS["twpool"]["image"] for p in patched))
+ck("salad env 含 PRL_ADDRESS/PRL_WORKER", all("PRL_ADDRESS" in p[2] and "PRL_WORKER" in p[2] for p in patched))
+ck("salad twpool env 不含 PRL_HOST", all("PRL_HOST" not in p[2] for p in patched))
+ck("salad worker 名沿用现有(gpu1/gpu2)", {p[2]["PRL_WORKER"] for p in patched}=={"gpu1","gpu2"})
+ck("salad 运行实例都 recreate", len(recreated)==2)
+ck("salad 结果 2 组 ok", sum(1 for x in rs["results"] if x["platform"]=="salad" and x["ok"])==2)
+
+# salad pearlhash 目标: env 含 PRL_HOST
+cfgs2={"prl_address":ADDR,"prl_host":HOST,"runpod":{"enabled":False},"vast":{"enabled":False},"salad":{"enabled":True}}
+patched.clear()
+S.migrate_account(cfgs2,{"rented":{}},"salad","pearlhash",live=True)
+ck("salad pearlhash env 含 PRL_HOST", patched and all(p[2].get("PRL_HOST")==HOST for p in patched))
+
+# salad 单组失败不中断
+cfgs3={"prl_address":ADDR,"prl_host":HOST,"runpod":{"enabled":False},"vast":{"enabled":False},"salad":{"enabled":True}}
+S.list_salad_container_groups=lambda cfg:[{"name":"gA","container":{"environment_variables":{"WORKER_NAME":"gA"}}},{"name":"bad","container":{"environment_variables":{"WORKER_NAME":"bad"}}},{"name":"gB","container":{"environment_variables":{"WORKER_NAME":"gB"}}}]
+def patch_fail(cfg,gname,image,env):
+    if gname=="bad": raise RuntimeError("boom")
+S.migrate_salad_group=patch_fail
+S.list_salad_instances=lambda cfg,gname:[]
+rs3=S.migrate_account(cfgs3,{"rented":{}},"salad","twpool",live=True)
+soks=[x for x in rs3["results"] if x["platform"]=="salad" and x["ok"]]
+sbads=[x for x in rs3["results"] if x["platform"]=="salad" and not x["ok"]]
+ck("salad 失败1组不中断: 2 ok 1 fail", len(soks)==2 and len(sbads)==1)
+
+# salad live=False 不实调
+cfgs4={"prl_address":ADDR,"prl_host":HOST,"runpod":{"enabled":False},"vast":{"enabled":False},"salad":{"enabled":True}}
+S.list_salad_container_groups=lambda cfg:[{"name":"g1","container":{"environment_variables":{"WORKER_NAME":"g1"}}}]
+calledp=[]
+S.migrate_salad_group=lambda *a,**k: calledp.append(1)
+S.migrate_account(cfgs4,{"rented":{}},"salad","twpool",live=False)
+ck("salad live=False 不调 PATCH", len(calledp)==0)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
