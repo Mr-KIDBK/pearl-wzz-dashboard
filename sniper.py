@@ -2565,6 +2565,7 @@ def run_salad_cycle(config, state, live):
     instance_watch = state.setdefault("salad_instance_watch", {})
     interval = int(cfg.get("hashrate_watch_interval_seconds", 30))
     low_seconds = int(cfg.get("low_efficiency_stop_seconds", 180))
+    low_eff_on = bool(cfg.get("salad_low_efficiency_enabled", True))  # 关掉=仍记录算力供显示, 但不判低效/不 reallocate
     cooldown_seconds = int(cfg.get("reallocate_cooldown_seconds", 600))
     log_lookback = int(cfg.get("log_lookback_seconds", 180))
     use_worker_fallback = bool(cfg.get("use_worker_fallback", False))
@@ -2723,6 +2724,10 @@ def run_salad_cycle(config, state, live):
             inst_entry["group"] = name
             inst_entry["instance_id"] = instance_id
             inst_entry["machine_id"] = machine_id
+            if not low_eff_on:  # 低效判断/回收已禁用: 算力已记录(供 dashboard 显示), 跳过判定与 reallocate
+                inst_entry.pop("low_since_epoch", None)
+                inst_entry.pop("low_reason", None)
+                continue
             image_name = str(((group.get("container") or {}).get("image") or ""))
             is_alphapool_group = "alphaminetech/pearl-miner" in image_name or object_contains_text(group, "alphaminetech/pearl-miner")
             alpha_monitor_gpus = set(str(x).upper() for x in cfg.get("alphapool_monitor_gpu_names", []))
