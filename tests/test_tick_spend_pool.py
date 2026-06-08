@@ -12,7 +12,7 @@ D.STATS_PATH=tf
 D.build_rentals=lambda: {"acc":{"platform":"runpod","machines":[
     {"id":"a","price":0.3,"pool":"twpool"},{"id":"b","price":0.34,"pool":"pearlhash"},{"id":"c","price":0.5,"pool":"unknown"}]}}
 D._is_running=lambda m: True
-json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{},"last_epoch":time.time()-3600}, open(tf,"w"))
+json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{},"last_epoch":time.time()-3599.5}, open(tf,"w"))
 s=D.tick_spend()
 bp=s.get("cumulative_usd_by_pool") or {}
 ck("twpool 累计≈0.3", abs(bp.get("twpool",0)-0.3)<0.05)

@@ -648,7 +648,7 @@ def tick_spend():
                 if pool in hbp:
                     hbp[pool] += pr
         dt = max(0.0, now - float(s.get("last_epoch", now)))
-        if dt < 3601:
+        if dt < 3600:
             s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + hourly * dt / 3600.0
             cbp = s.get("cumulative_usd_by_pool") or {}
             for pool, h in hbp.items():
