@@ -7,6 +7,8 @@ state.json
 state.*.json
 dashboard-stats.json
 control/
+secrets/
+.playwright-mcp/
 
 # === 真实平台配置(含你的钱包)— 用 config.*.example.json 起步 ===
 configs/config.*.json
