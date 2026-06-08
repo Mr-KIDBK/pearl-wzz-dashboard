@@ -625,7 +625,8 @@ def active_rentals(account_id):
             continue
         out.append({"id": r.get("contract_id") or r.get("external_id"), "gpu": r.get("gpu"),
                     "price": r.get("price"), "hashrate_th": r.get("last_hashrate_th"),
-                    "created_epoch": r.get("created_epoch")})
+                    "created_epoch": r.get("created_epoch"),
+                    "worker": (r.get("last_hashrate_lookup") or {}).get("worker")})
     return out
 
 
@@ -917,10 +918,13 @@ def build_rentals():
         plat = platform_of(acct)
         cfg = read_config(acct).get(plat, {})
         items = []
+        imgs = account_machine_images(acct) if plat in ("runpod", "vast") else {}
         for r in active_rentals(acct):
             dur = int(now - float(r["created_epoch"])) if r.get("created_epoch") else None
             d = dict(r)
             d["duration_seconds"] = dur
+            img = d.get("image") or (imgs.get(str(d.get("id"))) if plat in ("runpod", "vast") else None)
+            d["pool"] = machine_pool(img, d.get("worker"))
             items.append(d)
         res[acct] = {
             "platform": plat,
