@@ -897,7 +897,6 @@ def build_summary(pool_key="merged"):
     running_machines = running if pool_key == "merged" else rbp.get(pool_key, 0)
     stats = read_json(STATS_PATH, {})
     cp = coin_price()
-    rent_usd = round(float(stats.get("cumulative_usd", 0.0)), 4)
     ph_output = round(tick_output(pool_data()), 4)     # 始终调: 保持 pearlhash 自重置累加
     tw = twpool_data()
     tw_total = round(float((tw or {}).get("balance") or 0) + float((tw or {}).get("paid") or 0), 4) if isinstance(tw, dict) else 0.0
@@ -908,6 +907,29 @@ def build_summary(pool_key="merged"):
     else:
         output, basis = round(ph_output + tw_total, 4), "mixed"
     output_usd = round(output * cp, 2)       # 折合 USD
+    # 按池当前 burn
+    burn_total = 0.0
+    bbp = {"pearlhash": 0.0, "twpool": 0.0}
+    for acct, info in rentals.items():
+        for m in info.get("machines", []):
+            try:
+                pr = float(m.get("price") or 0)
+            except Exception:
+                pr = 0.0
+            burn_total += pr
+            if m.get("pool") in bbp:
+                bbp[m["pool"]] += pr
+    cbp = stats.get("cumulative_usd_by_pool") or {}
+    if pool_key == "pearlhash":
+        cur_hourly = round(bbp["pearlhash"], 4)
+        rent = round(float(cbp.get("pearlhash", 0.0)), 4)
+    elif pool_key == "twpool":
+        cur_hourly = round(bbp["twpool"], 4)
+        rent = round(float(cbp.get("twpool", 0.0)), 4)
+    else:
+        cur_hourly = round(burn_total, 4)
+        rent = round(float(stats.get("cumulative_usd", 0.0)), 4)
+    eff = round(pv["total_hashrate_th"] / cur_hourly, 1) if cur_hourly > 0 else None
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,
@@ -915,13 +937,14 @@ def build_summary(pool_key="merged"):
         "running_by_platform": per_plat,
         "total_hashrate_th": pv["total_hashrate_th"],
         "workers": pv["workers"],
-        "cumulative_rent_usd": rent_usd,
-        "current_hourly_usd": round(float(stats.get("current_hourly_usd", 0.0)), 4),
+        "cumulative_rent_usd": rent,
+        "current_hourly_usd": cur_hourly,
         "coin_price_usd": cp,
         "coin_price_live": _price_cache.get("prl") is not None,  # True=实时拉取, False=fallback
         "cumulative_output": output,
         "cumulative_output_usd": output_usd,
-        "cumulative_profit_usd": round(output_usd - rent_usd, 2),
+        "cumulative_profit_usd": round(output_usd - rent, 2),
+        "efficiency_th_per_usd": eff,
         "produced_basis": basis,
         "pool_balance": pv["pool_balance"],
         "pool_view": pool_key,
