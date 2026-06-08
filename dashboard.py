@@ -1545,12 +1545,14 @@ function dur(s){if(s==null)return '-';let h=Math.floor(s/3600),m=Math.floor(s%36
 function fnum(n,d){if(n==null)return '-';n=Number(n);if(Math.abs(n)<1e-9)n=0;return n.toLocaleString(undefined,{maximumFractionDigits:d==null?2:d});}
 async function resetStats(){if(!confirm('确认重置统计? 累计租金 / 产出 / 利润都会清零, 从现在重新起算(币价保留)。'))return;try{let r=await api('/api/reset-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(r&&r.ok){toast('统计已重置, 从现在起算');refresh();}else toast((r&&r.error)||'重置失败');}catch(e){}}
 
-async function renderOverview(){if(EDITING)return;let d,r;try{d=await api('/api/summary');r=await api('/api/rentals')}catch(e){return}
+async function renderOverview(){if(EDITING)return;let d,r;try{let pv=localStorage.getItem('pool_view')||'merged';d=await api('/api/summary?pool='+encodeURIComponent(pv));r=await api('/api/rentals')}catch(e){return}
 if(ROLE=='admin'){let _ce=document.getElementById('cfaccts');if(_ce)_ce.innerHTML=Object.keys(r).map(a=>`<div class="ni sub adm${(view=='cf'&&subtab==a)?' on':''}" data-nav=cf:${a} onclick="nav('cf:${a}')">${esc((r[a]&&r[a].label)||a)}</div>`).join('');}
 let acct='https://pearlhash.xyz/account/'+encodeURIComponent(d.wallet);
 let pe=d.pool_error?`<div class=muted style="color:var(--warn);margin-top:10px">POOL_API: ${esc(d.pool_error)}</div>`:'';
 let bp=Object.entries(d.running_by_platform).map(([k,v])=>`${k} ${v}`).join('  ·  ');
 let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMonth()+1)+'-'+ssd.getDate()+' '+String(ssd.getHours()).padStart(2,'0')+':'+String(ssd.getMinutes()).padStart(2,'0')):'';
+let pbasis=d.produced_basis||'mixed';
+let plabel=pbasis=='since_reset'?('自重置起算'+(ssl?(' (统计自 '+ssl+')'):'')):(pbasis=='all_time'?'全期(已付+未付)':'PearlHash 自重置 + TW Pool 全期');
 let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
 let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
@@ -1569,12 +1571,14 @@ document.getElementById('ov').innerHTML=`
 <div style=min-width:0><div class=k>WALLET · 钱包地址</div><div class=addr>${esc(d.wallet)}</div></div>
 <div class=row style=flex-shrink:0;gap:8px>
 <button class=b-mini onclick="copyAddr('${esc(d.wallet)}')">复制</button>
-<div class=go onclick="window.open('${acct}','_blank')">PearlHash →</div></div></div>
+<div class=go onclick="window.open('${acct}','_blank')">PearlHash →</div>
+<select id=poolView onchange="setPoolView(this.value)" title="切换显示的矿池(仅显示, 不影响挖矿)"><option value=merged>合并</option><option value=pearlhash>PearlHash</option><option value=twpool>TW Pool</option></select></div></div>
 <div class=cards>
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
 <div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · 自重置起算</div></div>
-<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · 自重置起算 @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div></div>
+<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · ${plabel} @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div></div>
+<div class=card><div class=k>矿池余额</div><div class=v>${d.pool_balance==null?'<span class=muted>—</span>':fnum(d.pool_balance,4)+' <small>PEARL</small>'}</div><div class=sub>${pbasis=='all_time'?'TW Pool':(pbasis=='since_reset'?'PearlHash':'两池合计')}</div></div>
 <div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>产出折合 − 累计租金</div></div>
 </div>
 ${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
@@ -1600,6 +1604,7 @@ ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:
 </div>
 <div class=sec><div class=lbl>矿池在挖 WORKER</div><table><tr><th>Worker</th><th>GPU</th><th>算力</th><th>IP</th></tr>${wk}</table></div>
 <div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;
+let _pvsel=document.getElementById('poolView'); if(_pvsel)_pvsel.value=localStorage.getItem('pool_view')||'merged';
 // renderOverview 每次重建 DOM 后恢复 K线展开状态
 if(_kopen){const kp=document.getElementById('kpanel');if(kp){kp.classList.add('open');if(_kdata)setTimeout(()=>drawKline(_kdata),0);else loadKline();}}
 }
@@ -1770,6 +1775,7 @@ async function savePw(){let pw=document.getElementById('newpw').value;if(pw.leng
 let r=await api('/api/dashboard-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
 document.getElementById('newpw').value='';toast(r.error?('失败: '+r.error):'看板密码已更新');}
 async function setPool(aid,pool){let r;try{r=await api('/api/set-pool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:aid,pool:pool})});}catch(e){toast('切换失败');return;}toast(r&&r.ok?('已切换新抢矿池: '+pool+'(重启应用后新机器生效)'):('失败: '+((r&&r.error)||'未知')));renderConfigTab();}
+function setPoolView(v){localStorage.setItem('pool_view',v);renderOverview();}
 async function loadLog(p){let n=document.getElementById('loglines_'+p).value;let pre=document.getElementById('log_'+p);
 pre.style.display='';pre.textContent='加载中…';
 try{let r=await api('/api/logs?platform='+p+'&lines='+n);pre.textContent=r.log||'(空)';pre.scrollTop=pre.scrollHeight;}catch(e){pre.textContent='加载失败';}}
