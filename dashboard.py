@@ -357,6 +357,56 @@ SALAD_STALE_MAX = 90.0   # 后台每 REFRESH_INTERVAL 强制刷新; 仅缓存超
 SALAD_WORKERS = 8        # 每账号容器组并发拉取的线程数
 REFRESH_INTERVAL = 30.0  # 后台刷新所有缓存(salad/余额/矿池)的周期(秒); 循环为 refresh→sleep, 轮次不重叠
 
+# ---------- Salad portal-api 会话抓取(GPU/余额, 由 salad_portal 常驻线程填充) ----------
+_salad_gpu = {}        # account -> {"data": {instance_id: gpu_class}, "ts"}
+_salad_balance = {}    # account -> {"data": usd, "ts"}
+_portal_lock = threading.Lock()
+PORTAL_STALE_MAX = 1800.0     # 超此值认为管理器已停/会话过期 → 回退(GPU 退区间、余额退估算)
+PORTAL_REFRESH_INTERVAL = 120.0  # 常驻浏览器刷新周期(< cf_clearance ~30min)
+
+def salad_gpu_for(account_id):
+    """该账号 {instance_id: gpu_class}(新鲜则返回, 否则 {})。"""
+    slot = _salad_gpu.get(account_id)
+    if slot and (time.time() - slot["ts"] < PORTAL_STALE_MAX):
+        return slot.get("data") or {}
+    return {}
+
+def salad_real_balance(account_id):
+    """该账号 portal 真实余额 USD(新鲜且非空则返回, 否则 None → 回退手填估算)。"""
+    slot = _salad_balance.get(account_id)
+    if slot and slot.get("data") is not None and (time.time() - slot["ts"] < PORTAL_STALE_MAX):
+        return slot["data"]
+    return None
+
+def _portal_update(account_id, gpu_map, balance_usd):
+    """salad_portal 常驻线程回调: 写缓存(加锁)。None 表示该轮没拿到 → 不覆盖旧值(留待过期回退)。"""
+    now = time.time()
+    with _portal_lock:
+        if gpu_map is not None:
+            _salad_gpu[account_id] = {"data": gpu_map, "ts": now}
+        if balance_usd is not None:
+            _salad_balance[account_id] = {"data": balance_usd, "ts": now}
+
+def salad_group_names(account_id):
+    """salad 容器组名: config include_container_groups 优先; 为空则公共 API 列出。供 portal 抓取按组取实例。"""
+    plat = platform_of(account_id)
+    scfg = read_config(account_id).get(plat, {}) or {}
+    names = scfg.get("include_container_groups") or []
+    if names:
+        return list(names)
+    kv = key_var_for(account_id)
+    key = read_env().get(kv) or os.environ.get(kv, "")
+    org = scfg.get("organization_name")
+    proj = scfg.get("project_name") or "default"  # 与 start_portal_manager 一致: 空 project 回退 default
+    base = str(scfg.get("base_url", "https://api.salad.com/api/public")).rstrip("/")
+    if not (key and org and proj):
+        return []
+    try:
+        d = salad_get(f"{base}/organizations/{org}/projects/{proj}/containers", key)
+        return [g.get("name") for g in (d.get("items") or []) if g.get("name")]
+    except Exception:
+        return []
+
 def salad_get(url, key):
     req = urllib.request.Request(url, headers={"Salad-Api-Key": key, "User-Agent": "sniper-dashboard/1.0"})
     with urllib.request.urlopen(req, timeout=12) as r:
@@ -705,6 +755,41 @@ def _refresh_loop():
         except Exception:
             pass
         time.sleep(REFRESH_INTERVAL)
+
+
+_portal_thread = None
+
+def start_portal_manager():
+    """启动常驻 headless Playwright 线程抓 salad portal gpu_class + 余额。
+    无 salad 会话文件 / playwright 缺失 → 静默跳过(salad 走回退)。"""
+    global _portal_thread
+    try:
+        import salad_portal
+    except Exception:
+        return
+    accounts = []
+    for acct in list_accounts():
+        if platform_of(acct) != "salad":
+            continue
+        sp = salad_portal.session_path(acct)
+        if not sp.exists():
+            continue
+        scfg = read_config(acct).get("salad", {}) or {}
+        accounts.append({"account": acct,
+                         "org": scfg.get("organization_name"),
+                         "project": scfg.get("project_name") or "default",
+                         "session_path": str(sp)})
+    if not accounts:
+        return
+    stop = threading.Event()  # daemon 线程随进程退出; 保留以满足 run_manager 接口
+    def _loop():
+        try:
+            salad_portal.run_manager(accounts, PORTAL_REFRESH_INTERVAL,
+                                     salad_group_names, _portal_update, stop)
+        except Exception:
+            pass
+    _portal_thread = threading.Thread(target=_loop, daemon=True)
+    _portal_thread.start()
 
 
 # ---------- 累计产出(自看板起算) ----------
@@ -2154,6 +2239,7 @@ def main():
     CONTROL_DIR.mkdir(exist_ok=True)
     threading.Thread(target=spend_loop, daemon=True).start()
     threading.Thread(target=_refresh_loop, daemon=True).start()  # 后台预热缓存, 请求只读缓存不阻塞
+    start_portal_manager()  # 常驻 headless 抓 salad portal GPU/余额(无会话/无 playwright 则静默跳过)
     port = int(CONF.get("port", 8787))
     srv = ThreadingHTTPServer(("0.0.0.0", port), H)
     print(f"pearl dashboard on http://0.0.0.0:{port}  (user={CONF.get('user','admin')})", flush=True)
