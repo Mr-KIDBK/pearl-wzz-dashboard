@@ -636,17 +636,27 @@ def tick_spend():
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
         now = time.time()
         hourly = 0.0
-        for plat in list_accounts():
-            for r in active_rentals(plat):
+        hbp = {"pearlhash": 0.0, "twpool": 0.0}
+        for acct, info in build_rentals().items():
+            for m in info.get("machines", []):
                 try:
-                    hourly += float(r.get("price") or 0)
+                    pr = float(m.get("price") or 0)
                 except Exception:
-                    pass
+                    pr = 0.0
+                hourly += pr
+                pool = m.get("pool")
+                if pool in hbp:
+                    hbp[pool] += pr
         dt = max(0.0, now - float(s.get("last_epoch", now)))
-        if dt < 3600:
+        if dt < 3601:
             s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + hourly * dt / 3600.0
+            cbp = s.get("cumulative_usd_by_pool") or {}
+            for pool, h in hbp.items():
+                cbp[pool] = float(cbp.get(pool, 0.0)) + h * dt / 3600.0
+            s["cumulative_usd_by_pool"] = cbp
         s["last_epoch"] = now
         s["current_hourly_usd"] = hourly
+        s["current_hourly_by_pool"] = hbp
         try:
             json.dump(s, open(STATS_PATH, "w"))
         except Exception:
@@ -791,6 +801,7 @@ def reset_stats():
         old = read_json(STATS_PATH, {})
         now = time.time()
         s = {"cumulative_usd": 0.0, "current_hourly_usd": 0.0,
+             "cumulative_usd_by_pool": {}, "current_hourly_by_pool": {},
              "last_epoch": now, "reset_epoch": now}
         if old.get("coin_price_usd") is not None:
             s["coin_price_usd"] = old["coin_price_usd"]
