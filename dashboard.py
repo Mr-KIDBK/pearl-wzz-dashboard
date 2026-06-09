@@ -303,10 +303,14 @@ def account_machine_images(acct, force=False):
 
 
 def pool_of_image(image):
-    """按镜像判定矿池: twpool 镜像→'twpool'; 其它非空→'pearlhash'; 空→None(交兜底)。"""
+    """按镜像判定矿池: 先认 herominers/pearlfortune; twpool 镜像→'twpool'; 其它非空→'pearlhash'; 空→None(交兜底)。"""
     s = str(image or "").lower()
     if not s:
         return None
+    if "herominers" in s:
+        return "herominers"
+    if "pearlfortune" in s:
+        return "pearlfortune"
     if "twpool" in s or "conishc" in s:
         return "twpool"
     return "pearlhash"
