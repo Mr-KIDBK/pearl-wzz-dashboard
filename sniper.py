@@ -2684,15 +2684,19 @@ def run_salad_cycle(config, state, live):
             log(f"Salad instance/log check failed: group={name} error={type(exc).__name__}: {exc}")
             continue
         running_instances = [x for x in instances if x.get("started") or x.get("ready") or str(x.get("state") or "").lower() == "running"]
+        log_by_machine = {e.get("machine_id"): e for e in log_rates.values() if e.get("machine_id")}  # 按 machine_id 索引日志算力(instance_id 不稳时用)
         for instance in running_instances:
-            instance_id = str(instance.get("id") or "")
-            if not instance_id:
+            instance_id = str(instance.get("instance_id") or instance.get("id") or "")
+            machine_id = str(instance.get("machine_id") or "")
+            if not instance_id and not machine_id:
                 continue
-            rate = log_rates.get(instance_id)
-            inst_key = f"{name}:{instance_id}"
+            # 日志算力关联: 优先 instance_id, 退 machine_id(salad API 偶发 instance_id=None; machine_id 稳定)
+            rate = (log_rates.get(instance_id) if instance_id else None) or (log_by_machine.get(machine_id) if machine_id else None)
+            inst_key = f"{name}:{instance_id or machine_id}"   # 稳定标识做 key(无 instance_id 用 machine_id)
             inst_entry = instance_watch.setdefault(inst_key, {})
             inst_entry.setdefault("first_seen_epoch", now_ts)  # 实例首次出现 → 新实例宽限基准
-            machine_id = (rate or {}).get("machine_id") or instance.get("machine_id")
+            if not machine_id:
+                machine_id = (rate or {}).get("machine_id") or ""
             # 日志 window 算力(显示口径; 无日志则 None)
             log_hr = float(rate.get("hashrate_th") or 0) if rate else None
             log_gpu = (rate or {}).get("gpu_name") or ""
@@ -2768,6 +2772,9 @@ def run_salad_cycle(config, state, live):
                 continue
             last_reallocate = float(inst_entry.get("last_reallocate_epoch") or 0)
             if now_ts - last_reallocate < cooldown_seconds:
+                continue
+            if not instance_id:  # 无 instance_id 无法调 reallocate API → 跳过(算力已记录)
+                inst_entry["last_reallocate_skipped"] = "no_instance_id"
                 continue
             try:
                 result = reallocate_salad_instance(config, name, instance_id)

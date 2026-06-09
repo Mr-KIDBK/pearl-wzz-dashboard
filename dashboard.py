@@ -563,7 +563,7 @@ def _salad_compute(account_id):
             for inst in insts:
                 iid = str(inst.get("instance_id") or inst.get("id") or "")
                 mid = str(inst.get("machine_id") or "")
-                w = watch.get(f"{nm}:{iid}") or {}
+                w = watch.get(f"{nm}:{iid or mid}") or watch.get(f"{nm}:{iid}") or {}  # key 用 instance_id 或 machine_id(与 sniper 一致; salad instance_id 偶发 None)
                 pw = pool_match(mid) or pool_worker(nm)
                 gc = str(gpu_cache.get(iid) or "").replace("NVIDIA GeForce ", "").strip()
                 gpu = gc or pgpu(pw) or (w.get("gpu") or "").strip() or "?"
