@@ -178,24 +178,26 @@ def gpu_map_value(name, mapping, default=None):
     return default
 
 
+_HASHRATE_UNIT_MULT = {  # 单位 → 折算到 TH/s 的系数
+    "H": 1 / 1_000_000_000_000, "KH": 1 / 1_000_000_000, "MH": 1 / 1_000_000,
+    "GH": 1 / 1_000, "TH": 1, "PH": 1_000, "EH": 1_000_000,
+}
+
 def parse_latest_hashrate(log_text):
     latest = None
     for line in str(log_text or "").splitlines():
+        # pearlhash/旧镜像: "Hashrate Total = N unit/s"
         match = re.search(r"Hashrate Total\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?H)/s", line, re.I)
         if match:
-            value = float(match.group(1))
-            unit = match.group(2).upper()
-            multiplier = {
-                "H": 1 / 1_000_000_000_000,
-                "KH": 1 / 1_000_000_000,
-                "MH": 1 / 1_000_000,
-                "GH": 1 / 1_000,
-                "TH": 1,
-                "PH": 1_000,
-                "EH": 1_000_000,
-            }.get(unit, 1)
-            latest = value * multiplier
+            latest = float(match.group(1)) * _HASHRATE_UNIT_MULT.get(match.group(2).upper(), 1)
             continue
+        # twpool 镜像: "... | 134.6 TH/s window | 135.2 TH/s avg | shares: ..." → 取 window(当前), 无则退 avg
+        match = (re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?H)/s\s*window", line, re.I)
+                 or re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?H)/s\s*avg", line, re.I))
+        if match:
+            latest = float(match.group(1)) * _HASHRATE_UNIT_MULT.get(match.group(2).upper(), 1)
+            continue
+        # 结构化字段
         match = re.search(r"(?:hashrate_th_s|share_equiv_th_s)=([0-9]+(?:\.[0-9]+)?)", line, re.I)
         if match:
             latest = float(match.group(1))
@@ -209,18 +211,7 @@ def parse_hashrate_text(value):
     match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?H)/s", text, re.I)
     if not match:
         return 0.0
-    numeric = float(match.group(1))
-    unit = match.group(2).upper()
-    multiplier = {
-        "H": 1 / 1_000_000_000_000,
-        "KH": 1 / 1_000_000_000,
-        "MH": 1 / 1_000_000,
-        "GH": 1 / 1_000,
-        "TH": 1,
-        "PH": 1_000,
-        "EH": 1_000_000,
-    }.get(unit, 1)
-    return numeric * multiplier
+    return float(match.group(1)) * _HASHRATE_UNIT_MULT.get(match.group(2).upper(), 1)
 
 
 def parse_log_gpu_name(log_text):
