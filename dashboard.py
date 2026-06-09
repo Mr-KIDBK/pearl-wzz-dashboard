@@ -755,9 +755,18 @@ def tick_spend():
         now = time.time()
         hourly = 0.0
         non_salad_hourly = 0.0  # 非-salad 所有机器(含 unknown 池)→ 累计总额(salad 改用真实余额下降, 不计 price×time)
-        hbp = {"pearlhash": 0.0, "twpool": 0.0}  # 非-salad 已知池 → 按池累计
+        import sniper as S
+        hbp = {k: 0.0 for k in S.POOLS}  # 非-salad 已知池 → 按池累计(POOLS 驱动)
+        salad_pool_of = {}  # salad 账号 -> 其机器占多数的池(归 drop 用)
         for acct, info in build_rentals().items():
             is_salad = platform_of(acct) == "salad"
+            if is_salad:
+                _cnt = {}
+                for m in info.get("machines", []):
+                    pk = m.get("pool") or "unknown"
+                    _cnt[pk] = _cnt.get(pk, 0) + 1
+                if _cnt:
+                    salad_pool_of[acct] = max(_cnt, key=_cnt.get)
             for m in info.get("machines", []):
                 try:
                     pr = float(m.get("price") or 0)
@@ -775,7 +784,7 @@ def tick_spend():
             s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + non_salad_hourly * dt / 3600.0
             for pool, h in hbp.items():
                 cbp[pool] = float(cbp.get(pool, 0.0)) + h * dt / 3600.0
-        # salad: portal 真实余额下降量(实测花费, 不受 dt 守卫; 计入 twpool 桶)
+        # salad: portal 真实余额下降量(实测花费, 不受 dt 守卫; 归该账号机器实际所在池, 未知则回退 twpool)
         prev = s.get("salad_balance_prev") or {}
         for acct in list_accounts():
             if platform_of(acct) != "salad":
@@ -787,7 +796,10 @@ def tick_spend():
             if p is not None and float(bal) < float(p):  # 仅下降计入; 充值上升不计负
                 drop = float(p) - float(bal)
                 s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + drop
-                cbp["twpool"] = float(cbp.get("twpool", 0.0)) + drop
+                dest = salad_pool_of.get(acct) or "twpool"
+                if dest == "unknown":
+                    dest = "twpool"
+                cbp[dest] = float(cbp.get(dest, 0.0)) + drop
             prev[acct] = bal
         s["salad_balance_prev"] = prev
         s["cumulative_usd_by_pool"] = cbp
