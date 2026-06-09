@@ -40,26 +40,36 @@ D.pearlfortune_data=lambda force=False: {
 }
 ck("balances 单对象 → 余额3.0", abs(D._pearlfortune_view()["pool_balance"]-3.0) < 1e-6)
 
-# connections.workers list[dict] 解析 + 含非 dict 元素不崩
+# connections.workers list[dict] 解析 + 含非 dict 元素不崩(真实字段 reported_hashrate)
 D.pearlfortune_data=lambda force=False: {
     "miner": {"data": {"balances": None, "credits": {"sum_amount_atomic": 0}}},
-    "connections": {"data": {"workers": [{"name":"w1","hashrate":140000000000000}, "junk"]}},
+    "connections": {"data": {"workers": [{"worker":"w1","reported_hashrate":140000000000000}, "junk"]}},
 }
 vw = D._pearlfortune_view()
 ck("pf list worker 解析 w1≈140TH", bool(vw["workers"]) and vw["workers"][0]["name"]=="w1" and abs(vw["workers"][0]["th"]-140)<1)
 ck("pf workers 含非dict元素不崩", isinstance(vw["workers"], list))
 
+# 真实 connections worker 结构(reported_hashrate, worker 名 'worker' 字段)
+D.pearlfortune_data=lambda force=False: {
+    "miner": {"data": {"balances": None, "credits": {"sum_amount_atomic": 0}}},
+    "connections": {"data": {"workers": [{"worker":"rp2-x-4090","reported_hashrate":269530616888726.12,"stale":False,"client_info":{"gpus":[{"model":"NVIDIA GeForce RTX 4090"}]}}]}},
+}
+vr = D._pearlfortune_view()
+ck("pf reported_hashrate→269.5TH", bool(vr["workers"]) and abs(vr["workers"][0]["th"]-269.53) < 0.1)
+ck("pf worker 名取 worker 字段", vr["workers"][0]["name"]=="rp2-x-4090")
+ck("pf gpu 取 client_info", vr["workers"][0]["gpus"]==["NVIDIA GeForce RTX 4090"])
+
 # 网络失败 → pool_error 传出
 D.pearlfortune_data=lambda force=False: {"_error": "URLError: boom"}
 ck("_error 传出 pool_error", bool(D._pearlfortune_view()["pool_error"]))
 
-# hashrate=0 的 worker → th=0(不因 falsy 而误读)
+# reported_hashrate=0 的 worker → th=0(不因 falsy 而误读)
 D.pearlfortune_data=lambda force=False: {
     "miner": {"data": {"balances": None, "credits": {"sum_amount_atomic": 0}}},
-    "connections": {"data": {"workers": [{"name":"idle","hashrate":0}]}},
+    "connections": {"data": {"workers": [{"worker":"idle","reported_hashrate":0}]}},
 }
 v0 = D._pearlfortune_view()
-ck("hashrate=0 → th=0", bool(v0["workers"]) and v0["workers"][0]["th"]==0.0)
+ck("reported_hashrate=0 → th=0", bool(v0["workers"]) and v0["workers"][0]["th"]==0.0)
 
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")

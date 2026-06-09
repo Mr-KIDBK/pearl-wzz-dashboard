@@ -318,9 +318,49 @@ def twpool_worker_hashrates(config):
     return out
 
 
+_pf_workers_cache = {"data": None, "ts": 0.0}
+PEARLFORTUNE_CONN_TTL = 25.0
+
+def pearlfortune_worker_hashrates(config):
+    """pearlfortune 逐-worker 算力(供 salad 低效池权威): {worker: {hashrate_th, gpu_info:[{name}]}}。
+    查 /api/v1/miners/<addr>/connections; reported_hashrate/1e12 → TH(与 twpool 同刻度); stale=true 视为离线(0)。
+    模块级短缓存(避免每账号每轮重打)。失败/无地址 → {}。"""
+    address = str((config or {}).get("prl_address") or "").strip()
+    if not address:
+        return {}
+    now = epoch_now()
+    c = _pf_workers_cache
+    if c["data"] is not None and now - c["ts"] < PEARLFORTUNE_CONN_TTL:
+        return c["data"]
+    out = {}
+    try:
+        url = f"https://pearlfortune.org/api/v1/miners/{urllib.parse.quote(address)}/connections"
+        data = request_json("GET", url, {"User-Agent": "sniper/1.0"}, timeout=15)
+        for w in (((data or {}).get("data") or {}).get("workers") or []):
+            if not isinstance(w, dict):
+                continue
+            name = w.get("worker") or w.get("name")
+            if not name:
+                continue
+            try:
+                th = 0.0 if w.get("stale") else round(float(w.get("reported_hashrate") or 0) / 1e12, 6)
+            except (TypeError, ValueError):
+                th = 0.0
+            gi = (w.get("client_info") or {}).get("gpus") or []
+            model = (gi[0] or {}).get("model") if (gi and isinstance(gi[0], dict)) else None
+            out[str(name)] = {"hashrate_th": th, "gpu_info": ([{"name": model}] if model else [])}
+    except Exception as exc:
+        log(f"pearlfortune worker check failed: {type(exc).__name__}: {exc}")
+        return {}
+    c["data"] = out
+    c["ts"] = now
+    return out
+
+
 _POOL_HASHRATE_FN = {
     "pearlhash": pearl_worker_hashrates,
     "twpool": twpool_worker_hashrates,
+    "pearlfortune": pearlfortune_worker_hashrates,
 }
 
 def merged_worker_hashrates(config):
@@ -342,6 +382,21 @@ def merged_worker_hashrates(config):
             if cur is None or float(info.get("hashrate_th") or 0) > float(cur.get("hashrate_th") or 0):
                 merged[w] = info
     return merged
+
+
+def pool_worker_hashrates(config, pool_id):
+    """按 pool_id 返回单池逐-worker 算力 {worker: {hashrate_th, gpu_info}}(供 salad 低效按池路由)。
+    herominers / 未注册池 → {}(不作权威, salad 退容器日志判定)。某池查询失败 → {}(→ 日志兜底, 不误杀)。"""
+    if pool_id == "herominers":
+        return {}
+    fn = _POOL_HASHRATE_FN.get(pool_id)
+    if not fn:
+        return {}
+    try:
+        return fn(config) or {}
+    except Exception as exc:
+        log(f"pool {pool_id} worker check failed: {type(exc).__name__}: {exc}")
+        return {}
 
 
 def compact_location(offer):
@@ -488,6 +543,19 @@ def effective_image(config):
     if p in POOLS:
         return POOLS[p]["image"]
     return (config or {}).get("image")
+
+def pool_of_image(image):
+    """按镜像判定矿池: 先认 herominers/pearlfortune; twpool/conishc→'twpool'; 其它非空→'pearlhash'; 空→None。"""
+    s = str(image or "").lower()
+    if not s:
+        return None
+    if "herominers" in s:
+        return "herominers"
+    if "pearlfortune" in s:
+        return "pearlfortune"
+    if "twpool" in s or "conishc" in s:
+        return "twpool"
+    return "pearlhash"
 
 
 def make_env(config, provider, gpu, external_id):
@@ -2574,30 +2642,28 @@ def run_salad_cycle(config, state, live):
             log(f"Salad PearlHash worker check failed: {type(exc).__name__}: {exc}")
     # 按型号判健康: 从矿池按 machine_id 解析每台真实 GPU, 取该型号的 min_hashrate_th 门槛
     per_model = bool(cfg.get("per_model_threshold_enabled", True))
-    _pool_cache = {"workers": worker_hashrates if worker_hashrates else None}
-    def _pool_workers():
-        if _pool_cache["workers"] is None:
+    _pool_cache = {}   # pool_id -> {worker: info}
+    def _pool_workers_for(pool_id):
+        if pool_id not in _pool_cache:
             try:
-                _pool_cache["workers"] = merged_worker_hashrates(config)
+                _pool_cache[pool_id] = pool_worker_hashrates(config, pool_id)
             except Exception as exc:
-                log(f"Salad pool lookup failed: {type(exc).__name__}: {exc}")
-                _pool_cache["workers"] = {}
-        return _pool_cache["workers"] or {}
-    def pool_info_by_machine(mid):
-        # salad worker 名 = <prefix>-salad-<machine_id>; 返回 (gpu_name, hashrate_th 或 None)。
-        # 矿池只列在线 worker → 查不到=该机当前不在矿池(可能离线/未挖)。
+                log(f"Salad pool lookup failed (pool={pool_id}): {type(exc).__name__}: {exc}")
+                _pool_cache[pool_id] = {}
+        return _pool_cache[pool_id] or {}
+    def pool_info_by_machine(mid, pool_id):
         if not mid:
             return "", None
-        for wname, winfo in _pool_workers().items():
+        for wname, winfo in _pool_workers_for(pool_id).items():
             if str(mid) in str(wname):
                 gi = (winfo or {}).get("gpu_info") or []
                 gpu = str((gi[0] if gi else {}).get("name") or "").replace("NVIDIA GeForce ", "").strip()
                 return gpu, float((winfo or {}).get("hashrate_th") or 0)
         return "", None
-    def pool_gpu_by_machine(mid):
+    def pool_gpu_by_machine(mid, pool_id):
         if not mid or not per_model:
             return ""
-        return pool_info_by_machine(mid)[0]
+        return pool_info_by_machine(mid, pool_id)[0]
     alphapool_workers = None
     alphapool_worker_api_failed = False
     for name, group in groups_by_name.items():
@@ -2691,6 +2757,9 @@ def run_salad_cycle(config, state, live):
             continue
         running_instances = [x for x in instances if x.get("started") or x.get("ready") or str(x.get("state") or "").lower() == "running"]
         log_by_machine = {e.get("machine_id"): e for e in log_rates.values() if e.get("machine_id")}  # 按 machine_id 索引日志算力(instance_id 不稳时用)
+        current_pool = pool_of_image(str(((group.get("container") or {}).get("image") or ""))) or "unknown"
+        # 池权威 = 有可靠 TH 刻度 worker 算力的池(pearlhash/twpool/pearlfortune); herominers(share×vardiff 指标不可靠) / unknown → 强制容器日志判定
+        pool_authoritative = current_pool in ("pearlhash", "twpool", "pearlfortune")
         for instance in running_instances:
             instance_id = str(instance.get("instance_id") or instance.get("id") or "")
             machine_id = str(instance.get("machine_id") or "")
@@ -2707,11 +2776,14 @@ def run_salad_cycle(config, state, live):
             log_hr = float(rate.get("hashrate_th") or 0) if rate else None
             log_gpu = (rate or {}).get("gpu_name") or ""
             # 池算力(判定权威): 新镜像每实例唯一 worker(<组>_<machine_id>) → 按 machine_id 命中
-            pool_workers = _pool_workers()             # merged 缓存; {} = twpool API 挂/无数据
-            pool_api_ok = bool(pool_workers)
-            pool_gpu, pool_hr = pool_info_by_machine(machine_id)  # pool_hr=None → 该实例不在池(离线)
+            if pool_authoritative:
+                pool_workers = _pool_workers_for(current_pool)   # {} = 该池 API 挂/无数据
+                pool_api_ok = bool(pool_workers)
+                pool_gpu, pool_hr = pool_info_by_machine(machine_id, current_pool)  # None → 不在该池(离线)
+            else:
+                pool_workers = {}; pool_api_ok = False; pool_gpu, pool_hr = "", None  # herominers/unknown → 退日志
             if pool_hr is not None:
-                inst_entry["pool_seen_epoch"] = now_ts  # 记录"曾在池上出现过"(供池权威离线判定的前提)
+                inst_entry.setdefault("pool_seen_by", {})[current_pool] = now_ts   # 按池记"曾在该池出现过"
             if not log_gpu:
                 log_gpu = pool_gpu or ""
             disp_hr = log_hr if log_hr is not None else (float(pool_hr) if pool_hr is not None else 0.0)
@@ -2742,7 +2814,7 @@ def run_salad_cycle(config, state, live):
                 min_hash = float(cfg.get("alphapool_min_hashrate_th", cfg.get("min_hashrate_th", {}).get(log_gpu or "RTX 5070", min_hash)))
                 gpu = log_gpu or "RTX 5070"
             elif per_model:
-                eff_gpu = pool_gpu_by_machine(inst_entry.get("machine_id")) or log_gpu or gpu
+                eff_gpu = pool_gpu_by_machine(inst_entry.get("machine_id"), current_pool) or log_gpu or gpu
                 if eff_gpu:
                     pmh = gpu_map_value(eff_gpu, cfg.get("min_hashrate_th", {}), None)
                     if pmh is not None:
@@ -2754,7 +2826,8 @@ def run_salad_cycle(config, state, live):
             inst_entry["mixed_group"] = mixed_group
             # 判定: 池权威, 但只对"曾在池上出现过(pool_seen)且有 machine_id"的实例用"池缺席=离线=0"来杀,
             # 避免新镜像未铺开 / worker 名不匹配 / 缺 machine_id 的健康实例被误杀(这些退日志判定, 日志健康则不杀)。
-            use_pool = pool_api_ok and bool(machine_id) and (pool_hr is not None or inst_entry.get("pool_seen_epoch"))
+            use_pool = pool_authoritative and pool_api_ok and bool(machine_id) and \
+                       (pool_hr is not None or (inst_entry.get("pool_seen_by") or {}).get(current_pool))
             if use_pool:
                 judged_hr = float(pool_hr) if pool_hr is not None else 0.0
                 judge_src = "pool"

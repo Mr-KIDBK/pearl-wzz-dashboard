@@ -32,6 +32,9 @@ def setup(*, log_hr, merged, flag=True, first_seen=NOW - 5000, low_since=NOW - 5
         S.salad_query_instance_hashrates = lambda config, name, lb: {
             IID: {"hashrate_th": log_hr, "machine_id": machine_id, "gpu_name": "RTX 4090"}}
     S.merged_worker_hashrates = lambda config: merged
+    # 按池路由后 run_salad_cycle 改用 pool_worker_hashrates(config, pool_id); 单组镜像=twpool →
+    # current_pool='twpool'(池权威, 行为与改前一致)。把单池查询路由到同一 merged mock。
+    S.pool_worker_hashrates = lambda config, pid: merged
     S.object_contains_text = lambda obj, text: False
     S.epoch_now = lambda: NOW
     S.log = lambda *a, **k: None
@@ -44,7 +47,9 @@ def setup(*, log_hr, merged, flag=True, first_seen=NOW - 5000, low_since=NOW - 5
     config = {"salad": cfg, "prl_address": ADDR, "pool": "twpool"}
     entry = {"first_seen_epoch": first_seen, "low_since_epoch": low_since}
     if pool_seen is not None:
-        entry["pool_seen_epoch"] = pool_seen
+        # 按池路由后 pool_seen 用按池作用域键 pool_seen_by[pool_id]; 单组=twpool。
+        # (legacy 标量 pool_seen_epoch 已被 use_pool 忽略 —— 防迁池误杀的安全改进。)
+        entry["pool_seen_by"] = {"twpool": pool_seen}
     state = {"salad_instance_watch": {f"{NAME}:{IID}": entry}}
     return config, state, calls
 

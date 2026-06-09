@@ -15,7 +15,7 @@ json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{"herominers":3.0,"pear
 # 池数据
 D.pool_data=lambda force=False: {"balance":0.0,"connected_workers":[],"pending_rewards":{"total_pending":0},"balance_transactions":[]}
 D.twpool_data=lambda force=False: {"balance":0.0,"paid":0.0,"reported":{}}
-D.herominers_data=lambda force=False: {"stats":{"balance":"100000000","paid":"500000000","hashrate":0},"workers":{}}  # 1+5=6 all-time
+D.herominers_data=lambda force=False: {"stats":{"hashrate":0},"workers":{},"unconfirmed":[{"amount":100000000}],"unlocked":[],"payments":[{"amount":500000000}]}  # 余额1(unconfirmed)+已付5(payments)=6 all-time
 D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":[{"balance_atomic":200000000}],"credits":{"sum_amount_atomic":800000000}}},"connections":{"data":{"workers":[]}}}  # 2+8=10
 # 机器: 1 台 herominers, 1 台 pearlfortune
 D.build_rentals=lambda: {
