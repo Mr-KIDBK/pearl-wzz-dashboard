@@ -463,7 +463,7 @@ POOLS = {
                   "image": "docker.io/kuzigmgm/pearl-miner:v11",
                   "reads_prl_host": True},
     "twpool":    {"label": "TW Pool (小幣礦池)",
-                  "image": "docker.io/conishc/pearl-miner:twpool-v1.9.0-auto",
+                  "image": "docker.io/mrkidbk/pearl-miner-twpool:v1.9.1",
                   "reads_prl_host": False},
 }
 
