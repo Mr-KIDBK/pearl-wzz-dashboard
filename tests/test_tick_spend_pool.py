@@ -11,6 +11,8 @@ tf=pathlib.Path(tempfile.mkdtemp())/"stats.json"
 D.STATS_PATH=tf
 D.build_rentals=lambda: {"acc":{"platform":"runpod","machines":[
     {"id":"a","price":0.3,"pool":"twpool"},{"id":"b","price":0.34,"pool":"pearlhash"},{"id":"c","price":0.5,"pool":"unknown"}]}}
+D.list_accounts = lambda: ["acc"]          # 隔离 tick_spend 新增的 salad 余额循环
+D.salad_real_balance = lambda a: None       # 无 salad 真实余额 → 不影响本测试
 D._is_running=lambda m: True
 json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{},"last_epoch":time.time()-3599.5}, open(tf,"w"))
 s=D.tick_spend()
