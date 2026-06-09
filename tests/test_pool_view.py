@@ -14,6 +14,9 @@ D.pool_data=lambda force=False: {"balance":10.0,
         "gpu_info":[{"name":"RTX 4090","hashrate":250000000000000}]}]}
 D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,
     "reported":{f"{addr}.gpu10":{"hs":140000000000000}}}
+# 新池默认 mock 为空(避免真打网络; 让 merged 余额仍=ph+tw)
+D.herominers_data=lambda force=False: {"error":"Not found"}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"credits":{"sum_amount_atomic":0}}},"connections":{"data":{"workers":[]}}}
 
 ph=D.pool_view("pearlhash")
 ck("pearlhash 总算力≈250", abs(ph["total_hashrate_th"]-250)<1)

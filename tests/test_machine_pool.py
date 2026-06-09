@@ -26,5 +26,10 @@ ck("有镜像按镜像", D.machine_pool("docker.io/conishc/x:twpool", "anyworker
 D.twpool_data=lambda force=False: {"reported":{f"{addr}.w1":{"hs":1}}}
 ck("无镜像走 worker", D.machine_pool(None, "w1")=="twpool")
 ck("都无→unknown", D.machine_pool(None, "ghost")=="unknown")
+ck("herominers 镜像→herominers", D.pool_of_image("docker.io/mrkidbk/pearl-miner-herominers:v3.3.6")=="herominers")
+ck("pearlfortune 镜像→pearlfortune", D.pool_of_image("docker.io/mrkidbk/pearl-miner-pearlfortune:v1.1.1")=="pearlfortune")
+ck("twpool 仍→twpool", D.pool_of_image("docker.io/mrkidbk/pearl-miner-twpool:v1.9.1")=="twpool")
+ck("其它非空→pearlhash", D.pool_of_image("docker.io/kuzigmgm/pearl-miner:v11")=="pearlhash")
+ck("空→None", D.pool_of_image("") is None)
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")

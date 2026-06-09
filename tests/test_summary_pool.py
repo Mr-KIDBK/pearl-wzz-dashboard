@@ -10,6 +10,8 @@ def ck(n,c):
 D.prl_address=lambda: "prl1pX"
 D.pool_data=lambda force=False: {"balance":10.0,"connected_workers":[]}
 D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{}}
+D.herominers_data=lambda force=False: {"error":"Not found"}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"credits":{"sum_amount_atomic":0}}},"connections":{"data":{"workers":[]}}}
 # build_summary 现在调 build_rentals; mock 返回空→running=0, running_by_pool 全零
 D.build_rentals=lambda: {}
 D.pool_view=lambda which: {
