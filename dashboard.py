@@ -1015,7 +1015,9 @@ def _pearlhash_view():
                       "gpus": [g.get("name") for g in (w.get("gpu_info") or [])]})
     bal = pool.get("balance") if isinstance(pool, dict) else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
-            "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
+            "pool_balance": (float(bal) if bal is not None else None),
+            "pool_paid": None,  # pearlhash 产出走 tick_output(自重置), 不用 balance+paid 全期口径
+            "pool_error": err}
 
 MAX_PLAUSIBLE_WORKER_TH = 2000.0  # 单 worker 合理算力上限(远超任何真实单机/组); 超出视为矿池上报损坏值, 剔除防污染总算力
 
@@ -1038,8 +1040,11 @@ def _twpool_view():
         total += th
         wlist.append({"name": worker, "th": th, "ip": None, "gpus": []})
     bal = data.get("balance") if isinstance(data, dict) else None
+    paid = data.get("paid") if isinstance(data, dict) else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
-            "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
+            "pool_balance": (float(bal) if bal is not None else None),
+            "pool_paid": (float(paid) if paid is not None else None),
+            "pool_error": err}
 
 def _herominers_view():
     """herominers 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
@@ -1122,24 +1127,34 @@ def _pearlfortune_view():
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
 
+# 池监控适配器注册表(方案 B): pool_id → {fetch, view}。新增矿池只在此登记 + POOLS 即可。
+POOL_MONITORS = {
+    "pearlhash":    {"fetch": pool_data,         "view": _pearlhash_view},
+    "twpool":       {"fetch": twpool_data,       "view": _twpool_view},
+    "herominers":   {"fetch": herominers_data,   "view": _herominers_view},
+    "pearlfortune": {"fetch": pearlfortune_data, "view": _pearlfortune_view},
+}
+
 def pool_view(which):
-    """按 which 返回显示映射: {workers, total_hashrate_th, pool_balance, pool_error}。
-    which: 'pearlhash' | 'twpool' | 'merged'(默认/未知 → merged)。无状态(产出在 build_summary 另算)。"""
-    if which == "pearlhash":
-        return _pearlhash_view()
-    if which == "twpool":
-        return _twpool_view()
-    ph, tw = _pearlhash_view(), _twpool_view()
+    """按 which 返回显示映射: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
+    which ∈ POOL_MONITORS → 单池; 否则(含 'merged'/未知)→ 跨所有池合并。无状态(产出在 build_summary 另算)。"""
+    if which in POOL_MONITORS:
+        return POOL_MONITORS[which]["view"]()
+    views = [m["view"]() for m in POOL_MONITORS.values()]
     by_name = {}
-    for w in ph["workers"] + tw["workers"]:
-        cur = by_name.get(w["name"])
-        if cur is None or (w.get("th") or 0) > (cur.get("th") or 0):
-            by_name[w["name"]] = w
-    bals = [v for v in (ph["pool_balance"], tw["pool_balance"]) if v is not None]
+    for v in views:
+        for w in v.get("workers", []):
+            cur = by_name.get(w["name"])
+            if cur is None or (w.get("th") or 0) > (cur.get("th") or 0):
+                by_name[w["name"]] = w
+    bals = [v["pool_balance"] for v in views if v.get("pool_balance") is not None]
+    errs = [v["pool_error"] for v in views if v.get("pool_error")]
     return {"workers": sorted(by_name.values(), key=lambda w: w.get("name") or ""),
-            "total_hashrate_th": round((ph["total_hashrate_th"] or 0) + (tw["total_hashrate_th"] or 0), 2),
+            "total_hashrate_th": round(sum(v.get("total_hashrate_th") or 0 for v in views), 2),
             "pool_balance": (round(sum(bals), 4) if bals else None),
-            "pool_error": ph["pool_error"] or tw["pool_error"]}
+            "pool_paid": (round(sum(v["pool_paid"] for v in views if v.get("pool_paid") is not None), 4)
+                          if any(v.get("pool_paid") is not None for v in views) else None),
+            "pool_error": (errs[0] if errs else None)}
 
 
 # ---------- 总览数据 ----------
