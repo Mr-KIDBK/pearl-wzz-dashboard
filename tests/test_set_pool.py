@@ -42,5 +42,15 @@ ck("full-config 含 pools 列表", isinstance(full.get("pools"), list) and len(f
 ck("pools 项含 id/label", all("id" in o and "label" in o for o in full["pools"]))
 ck("每账号含 pool 字段", all("pool" in v for v in full["platforms"].values()))
 
+# 新池可切换(save_pool_cfg 走 S.POOLS 校验)
+D.backup_and_write = lambda path, obj: captured.update({"path": path, "obj": obj})
+r = D.save_pool_cfg(acct, "herominers")
+ck("save_pool_cfg 接受 herominers", bool(r.get("ok")) and r.get("pool") == "herominers")
+r2 = D.save_pool_cfg(acct, "pearlfortune")
+ck("save_pool_cfg 接受 pearlfortune", bool(r2.get("ok")))
+r3 = D.save_pool_cfg(acct, "nosuchpool")
+ck("save_pool_cfg 拒绝未知池", bool(r3.get("error")))
+D.backup_and_write = orig
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
