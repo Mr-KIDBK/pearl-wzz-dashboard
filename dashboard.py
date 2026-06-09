@@ -685,28 +685,51 @@ def active_rentals(account_id):
 
 # ---------- 累计租金 ----------
 def tick_spend():
+    """累计租金 tick(spend_loop 每 60s 调)。口径:
+    current_hourly_usd = 所有机器单价估算(含 salad 名义报价, 平滑即时速率);
+    cumulative_usd = 非-salad price×time + salad portal 真实余额下降量(实际扣费)。
+    current_hourly_by_pool/hbp 仅含非-salad(salad 不走 price×time); UI 当前 $/h 由 build_summary 从 build_rentals 重算。"""
     with _lock:
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
         now = time.time()
         hourly = 0.0
-        hbp = {"pearlhash": 0.0, "twpool": 0.0}
+        non_salad_hourly = 0.0  # 非-salad 所有机器(含 unknown 池)→ 累计总额(salad 改用真实余额下降, 不计 price×time)
+        hbp = {"pearlhash": 0.0, "twpool": 0.0}  # 非-salad 已知池 → 按池累计
         for acct, info in build_rentals().items():
+            is_salad = platform_of(acct) == "salad"
             for m in info.get("machines", []):
                 try:
                     pr = float(m.get("price") or 0)
                 except Exception:
                     pr = 0.0
-                hourly += pr
-                pool = m.get("pool")
-                if pool in hbp:
-                    hbp[pool] += pr
+                hourly += pr  # 当前 $/h 显示(含 salad 估算)
+                if not is_salad:
+                    non_salad_hourly += pr
+                    pool = m.get("pool")
+                    if pool in hbp:
+                        hbp[pool] += pr
         dt = max(0.0, now - float(s.get("last_epoch", now)))
-        if dt < 3600:
-            s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + hourly * dt / 3600.0
-            cbp = s.get("cumulative_usd_by_pool") or {}
+        cbp = s.get("cumulative_usd_by_pool") or {}
+        if dt < 3600:  # 非-salad: price×time(防抖不变; 总额含所有非-salad 机器, 含 unknown 池)
+            s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + non_salad_hourly * dt / 3600.0
             for pool, h in hbp.items():
                 cbp[pool] = float(cbp.get(pool, 0.0)) + h * dt / 3600.0
-            s["cumulative_usd_by_pool"] = cbp
+        # salad: portal 真实余额下降量(实测花费, 不受 dt 守卫; 计入 twpool 桶)
+        prev = s.get("salad_balance_prev") or {}
+        for acct in list_accounts():
+            if platform_of(acct) != "salad":
+                continue
+            bal = salad_real_balance(acct)
+            if bal is None:  # portal 拿不到 → 跳过(prev 不更新, 下次有效读数补这段缺口)
+                continue
+            p = prev.get(acct)
+            if p is not None and float(bal) < float(p):  # 仅下降计入; 充值上升不计负
+                drop = float(p) - float(bal)
+                s["cumulative_usd"] = float(s.get("cumulative_usd", 0.0)) + drop
+                cbp["twpool"] = float(cbp.get("twpool", 0.0)) + drop
+            prev[acct] = bal
+        s["salad_balance_prev"] = prev
+        s["cumulative_usd_by_pool"] = cbp
         s["last_epoch"] = now
         s["current_hourly_usd"] = hourly
         s["current_hourly_by_pool"] = hbp
