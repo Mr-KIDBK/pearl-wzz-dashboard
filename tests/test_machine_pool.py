@@ -8,6 +8,7 @@ fails=0
 def ck(n,c):
     global fails; print(("  ✓ " if c else "  ✗ ")+n); fails+=0 if c else 1
 ck("conishc twpool 镜像→twpool", D.pool_of_image("docker.io/conishc/pearl-miner:twpool-v1.9.0-auto")=="twpool")
+ck("新镜像 mrkidbk/pearl-miner-twpool→twpool", D.pool_of_image("docker.io/mrkidbk/pearl-miner-twpool:v1.9.1")=="twpool")
 ck("kuzigmgm→pearlhash", D.pool_of_image("docker.io/kuzigmgm/pearl-miner:v11")=="pearlhash")
 ck("mrkidbk→pearlhash", D.pool_of_image("docker.io/mrkidbk/pearl-miner:latest")=="pearlhash")
 ck("空镜像→None", D.pool_of_image("") is None and D.pool_of_image(None) is None)
