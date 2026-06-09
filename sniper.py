@@ -2691,34 +2691,37 @@ def run_salad_cycle(config, state, live):
             rate = log_rates.get(instance_id)
             inst_key = f"{name}:{instance_id}"
             inst_entry = instance_watch.setdefault(inst_key, {})
+            inst_entry.setdefault("first_seen_epoch", now_ts)  # 实例首次出现 → 新实例宽限基准
             machine_id = (rate or {}).get("machine_id") or instance.get("machine_id")
-            if rate:
-                hashrate_th = float(rate.get("hashrate_th") or 0)
-                log_gpu = rate.get("gpu_name") or ""
-                inst_entry["last_hashrate_source"] = "salad_log"
-            else:
-                # P1-B: running 实例但本轮无算力日志 → 先用矿池兜底; 矿池也查不到则按 0 算力。
-                # 否则坏/不出日志的实例会永远逃过回收。low_efficiency_stop_seconds 仍提供防抖,
-                # 单轮日志抽风不会立刻踢(需持续低于门槛满 stop_seconds)。
-                if not bool(cfg.get("treat_missing_log_as_zero", True)):
-                    continue
-                pgpu, phr = pool_info_by_machine(machine_id)
-                log_gpu = pgpu or ""
-                if phr is not None:
-                    hashrate_th = float(phr)
-                    inst_entry["last_hashrate_source"] = "pool_fallback"
-                else:
-                    hashrate_th = 0.0
-                    inst_entry["last_hashrate_source"] = "missing_log_zero"
+            # 日志 window 算力(显示口径; 无日志则 None)
+            log_hr = float(rate.get("hashrate_th") or 0) if rate else None
+            log_gpu = (rate or {}).get("gpu_name") or ""
+            # 池算力(判定权威): 新镜像每实例唯一 worker(<组>_<machine_id>) → 按 machine_id 命中
+            pool_workers = _pool_workers()             # merged 缓存; {} = twpool API 挂/无数据
+            pool_api_ok = bool(pool_workers)
+            pool_gpu, pool_hr = pool_info_by_machine(machine_id)  # pool_hr=None → 该实例不在池(离线)
+            if pool_hr is not None:
+                inst_entry["pool_seen_epoch"] = now_ts  # 记录"曾在池上出现过"(供池权威离线判定的前提)
+            if not log_gpu:
+                log_gpu = pool_gpu or ""
+            disp_hr = log_hr if log_hr is not None else (float(pool_hr) if pool_hr is not None else 0.0)
             inst_entry["last_check_epoch"] = now_ts
-            inst_entry["last_hashrate_th"] = round(hashrate_th, 3)
+            inst_entry["last_hashrate_th"] = round(disp_hr, 3)            # 显示口径 = 日志 window(无则池)
+            inst_entry["pool_hashrate_th"] = round(float(pool_hr), 3) if pool_hr is not None else None
+            inst_entry["last_hashrate_source"] = "salad_log" if log_hr is not None else ("pool_fallback" if pool_hr is not None else "missing")
             inst_entry["group"] = name
             inst_entry["instance_id"] = instance_id
             inst_entry["machine_id"] = machine_id
-            if not low_eff_on:  # 低效判断/回收已禁用: 算力已记录(供 dashboard 显示), 跳过判定与 reallocate
+            if not low_eff_on:  # 低效判定已禁用: 只记录算力(供 dashboard), 不判/不 reallocate
                 inst_entry.pop("low_since_epoch", None)
                 inst_entry.pop("low_reason", None)
                 continue
+            # 新实例宽限: 还在下载/启动(新镜像首拉慢), 不判
+            if now_ts - float(inst_entry.get("first_seen_epoch") or now_ts) < int(cfg.get("salad_new_instance_grace_seconds", 600)):
+                inst_entry.pop("low_since_epoch", None)
+                inst_entry.pop("low_reason", None)
+                continue
+            # gpu / 门槛 解析(保留 alphapool / per_model)
             image_name = str(((group.get("container") or {}).get("image") or ""))
             is_alphapool_group = "alphaminetech/pearl-miner" in image_name or object_contains_text(group, "alphaminetech/pearl-miner")
             alpha_monitor_gpus = set(str(x).upper() for x in cfg.get("alphapool_monitor_gpu_names", []))
@@ -2729,7 +2732,6 @@ def run_salad_cycle(config, state, live):
                 min_hash = float(cfg.get("alphapool_min_hashrate_th", cfg.get("min_hashrate_th", {}).get(log_gpu or "RTX 5070", min_hash)))
                 gpu = log_gpu or "RTX 5070"
             elif per_model:
-                # 按 machine_id 解析真实型号, 取该型号门槛; 取不到型号或型号未配则保持组级 default
                 eff_gpu = pool_gpu_by_machine(inst_entry.get("machine_id")) or log_gpu or gpu
                 if eff_gpu:
                     pmh = gpu_map_value(eff_gpu, cfg.get("min_hashrate_th", {}), None)
@@ -2740,15 +2742,26 @@ def run_salad_cycle(config, state, live):
             inst_entry["gpu"] = gpu or log_gpu
             inst_entry["min_hash_applied"] = float(min_hash) if min_hash is not None else None
             inst_entry["mixed_group"] = mixed_group
-            if hashrate_th >= float(min_hash):
+            # 判定: 池权威, 但只对"曾在池上出现过(pool_seen)且有 machine_id"的实例用"池缺席=离线=0"来杀,
+            # 避免新镜像未铺开 / worker 名不匹配 / 缺 machine_id 的健康实例被误杀(这些退日志判定, 日志健康则不杀)。
+            use_pool = pool_api_ok and bool(machine_id) and (pool_hr is not None or inst_entry.get("pool_seen_epoch"))
+            if use_pool:
+                judged_hr = float(pool_hr) if pool_hr is not None else 0.0
+                judge_src = "pool"
+            elif log_hr is not None:
+                judged_hr = log_hr
+                judge_src = "log_fallback"
+            else:
+                continue
+            if judged_hr >= float(min_hash):
                 inst_entry.pop("low_since_epoch", None)
                 inst_entry.pop("low_reason", None)
                 continue
-            reason = f"instance_hashrate={hashrate_th:.2f}TH<{float(min_hash):.2f}TH gpu={gpu or 'unknown'}"
+            reason = f"{judge_src}_hashrate={judged_hr:.2f}TH<{float(min_hash):.2f}TH gpu={gpu or 'unknown'}"
             if not inst_entry.get("low_since_epoch"):
                 inst_entry["low_since_epoch"] = now_ts
                 inst_entry["low_reason"] = reason
-                log(f"Salad low instance hashrate observed: group={name} instance={instance_id} machine={inst_entry.get('machine_id')} {reason}")
+                log(f"Salad low instance ({judge_src}) observed: group={name} instance={instance_id} machine={machine_id} {reason}")
                 continue
             duration = now_ts - float(inst_entry["low_since_epoch"])
             if duration < low_seconds:
