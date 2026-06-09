@@ -1073,8 +1073,9 @@ def _twpool_view():
 
 def _herominers_view():
     """herominers 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
-    余额/已付字段(stats.balance/paid, 原子 1e8)已实测确认; 逐-worker 与 stats.hashrate 格式
-    待迁移测试用真机数据定型 —— 这里防御性解析(取不到则空/0, 不崩)。"""
+    余额=顶层 unconfirmed(未确认)+unlocked(已成熟), 已付=顶层 payments(原子 1e8);
+    迁移测试真数据确认这些为顶层键(无 stats.balance/paid), 但其元素结构因测试时列表为空而未经
+    非零数据确认 → _sum_atomic 防御性兼容多形态。逐-worker 与 stats.hashrate 格式防御性解析(不崩)。"""
     data = herominers_data()
     if not isinstance(data, dict):
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
@@ -1083,12 +1084,28 @@ def _herominers_view():
     # Not-found / 空记录 → 空(非错误)
     if data.get("error") or "stats" not in data:
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
-    stats = data.get("stats") or {}
-    def _atom(x):
-        try: return float(x) / 1e8
-        except (TypeError, ValueError): return 0.0
-    bal = _atom(stats.get("balance"))
-    paid = _atom(stats.get("paid"))
+    def _sum_atomic(lst):
+        # 防御: herominers unconfirmed/unlocked/payments 结构未经非零数据确认,
+        # 兼容 标量数字 / 列表[数字|{"amount":..}|[..,amount]]; 取不到记 0、不崩。
+        if isinstance(lst, (int, float)):
+            lst = [lst]
+        elif not isinstance(lst, (list, tuple)):
+            lst = lst or []
+        total = 0.0
+        for e in lst:
+            v = None
+            if isinstance(e, (int, float)):
+                v = e
+            elif isinstance(e, dict):
+                v = e.get("amount") if "amount" in e else e.get("value")   # 不用 or, 避免 amount=0 误回退
+            elif isinstance(e, (list, tuple)) and e:
+                for x in reversed(e):
+                    if isinstance(x, (int, float)): v = x; break
+            try: total += float(v) / 1e8
+            except (TypeError, ValueError): pass
+        return total
+    bal = round(_sum_atomic(data.get("unconfirmed")) + _sum_atomic(data.get("unlocked")), 6)   # 余额=未确认+已成熟(待真实产出确认元素结构)
+    paid = round(_sum_atomic(data.get("payments")), 6)                                          # 已付=payments 历史和
     # 逐-worker: herominers workers 可能是 dict{name: {...}} 或 list[{...}](待迁移测试确认)。
     # 防御性: 两种都尝试, 取 hashrate(H/s)→ TH; 取不到记 0、不崩。
     wlist, total = [], 0.0
@@ -1115,7 +1132,8 @@ def _herominers_view():
 def _pearlfortune_view():
     """pearlfortune 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
     余额(balances.balance_atomic)/ 已付(credits.sum_amount_atomic), 原子 1e8, 已实测确认;
-    逐-worker(connections.workers[])结构待迁移测试定型 —— 防御性解析。"""
+    逐-worker(connections.workers[]): 字段 worker / reported_hashrate(H/s,/1e12→TH) /
+    client_info.gpus[0].model 已经迁移测试真数据确认。"""
     data = pearlfortune_data()
     if not isinstance(data, dict):
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
@@ -1133,22 +1151,25 @@ def _pearlfortune_view():
     elif isinstance(balances, dict):
         bal = _atom(balances.get("balance_atomic"))
     paid = _atom((md.get("credits") or {}).get("sum_amount_atomic"))
-    # 逐-worker: connections.workers[](结构待迁移测试确认)。防御性: 跳过非 dict; 取 name + hashrate(H/s)→TH。
+    # 逐-worker: connections.workers[](迁移测试真数据确认)。防御性: 跳过非 dict;
+    # 名取真实字段 worker(name 兜底); 算力取 reported_hashrate(H/s)→TH; gpu 取 client_info.gpus[0].model。
     cd = ((data.get("connections") or {}).get("data")) or {}
     wlist, total = [], 0.0
     for w in (cd.get("workers") or []):
         if not isinstance(w, dict):
             continue
-        name = w.get("name") or w.get("worker") or ""
-        raw = w.get("hashrate")
+        name = w.get("worker") or w.get("name") or ""
+        raw = w.get("reported_hashrate")
         try:
             th = round(float(raw) / 1e12, 2) if raw is not None else 0.0
         except (TypeError, ValueError):
             th = 0.0
         if th > MAX_PLAUSIBLE_WORKER_TH:
             continue
+        gi = (w.get("client_info") or {}).get("gpus") or []
+        gpu_model = gi[0].get("model") if (gi and isinstance(gi[0], dict)) else None
         total += th
-        wlist.append({"name": name, "th": th, "ip": None, "gpus": []})
+        wlist.append({"name": name, "th": th, "ip": None, "gpus": ([gpu_model] if gpu_model else [])})
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
 
