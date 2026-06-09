@@ -921,6 +921,8 @@ def _pearlhash_view():
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
 
+MAX_PLAUSIBLE_WORKER_TH = 2000.0  # 单 worker 合理算力上限(远超任何真实单机/组); 超出视为矿池上报损坏值, 剔除防污染总算力
+
 def _twpool_view():
     """twpool 矿池视图: {workers, total_hashrate_th, pool_balance, pool_error}。"""
     data = twpool_data()
@@ -935,6 +937,8 @@ def _twpool_view():
             th = round(float((info or {}).get("hs") or 0) / 1e12, 2)
         except (TypeError, ValueError):
             th = 0.0
+        if th > MAX_PLAUSIBLE_WORKER_TH:  # 矿池上报损坏(如 274056 TH/s)→ 剔除, 不计入总算力/列表
+            continue
         total += th
         wlist.append({"name": worker, "th": th, "ip": None, "gpus": []})
     bal = data.get("balance") if isinstance(data, dict) else None
