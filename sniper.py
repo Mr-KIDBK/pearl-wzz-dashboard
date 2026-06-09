@@ -489,6 +489,19 @@ def effective_image(config):
         return POOLS[p]["image"]
     return (config or {}).get("image")
 
+def pool_of_image(image):
+    """按镜像判定矿池: 先认 herominers/pearlfortune; twpool/conishc→'twpool'; 其它非空→'pearlhash'; 空→None。"""
+    s = str(image or "").lower()
+    if not s:
+        return None
+    if "herominers" in s:
+        return "herominers"
+    if "pearlfortune" in s:
+        return "pearlfortune"
+    if "twpool" in s or "conishc" in s:
+        return "twpool"
+    return "pearlhash"
+
 
 def make_env(config, provider, gpu, external_id):
     safe_gpu = re.sub(r"[^A-Za-z0-9]+", "-", gpu).strip("-").lower()
