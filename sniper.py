@@ -318,9 +318,49 @@ def twpool_worker_hashrates(config):
     return out
 
 
+_pf_workers_cache = {"data": None, "ts": 0.0}
+PEARLFORTUNE_CONN_TTL = 25.0
+
+def pearlfortune_worker_hashrates(config):
+    """pearlfortune 逐-worker 算力(供 salad 低效池权威): {worker: {hashrate_th, gpu_info:[{name}]}}。
+    查 /api/v1/miners/<addr>/connections; reported_hashrate/1e12 → TH(与 twpool 同刻度); stale=true 视为离线(0)。
+    模块级短缓存(避免每账号每轮重打)。失败/无地址 → {}。"""
+    address = str((config or {}).get("prl_address") or "").strip()
+    if not address:
+        return {}
+    now = epoch_now()
+    c = _pf_workers_cache
+    if c["data"] is not None and now - c["ts"] < PEARLFORTUNE_CONN_TTL:
+        return c["data"]
+    out = {}
+    try:
+        url = f"https://pearlfortune.org/api/v1/miners/{urllib.parse.quote(address)}/connections"
+        data = request_json("GET", url, {"User-Agent": "sniper/1.0"}, timeout=15)
+        for w in (((data or {}).get("data") or {}).get("workers") or []):
+            if not isinstance(w, dict):
+                continue
+            name = w.get("worker") or w.get("name")
+            if not name:
+                continue
+            try:
+                th = 0.0 if w.get("stale") else round(float(w.get("reported_hashrate") or 0) / 1e12, 6)
+            except (TypeError, ValueError):
+                th = 0.0
+            gi = (w.get("client_info") or {}).get("gpus") or []
+            model = (gi[0] or {}).get("model") if (gi and isinstance(gi[0], dict)) else None
+            out[str(name)] = {"hashrate_th": th, "gpu_info": ([{"name": model}] if model else [])}
+    except Exception as exc:
+        log(f"pearlfortune worker check failed: {type(exc).__name__}: {exc}")
+        return {}
+    c["data"] = out
+    c["ts"] = now
+    return out
+
+
 _POOL_HASHRATE_FN = {
     "pearlhash": pearl_worker_hashrates,
     "twpool": twpool_worker_hashrates,
+    "pearlfortune": pearlfortune_worker_hashrates,
 }
 
 def merged_worker_hashrates(config):
@@ -342,6 +382,21 @@ def merged_worker_hashrates(config):
             if cur is None or float(info.get("hashrate_th") or 0) > float(cur.get("hashrate_th") or 0):
                 merged[w] = info
     return merged
+
+
+def pool_worker_hashrates(config, pool_id):
+    """按 pool_id 返回单池逐-worker 算力 {worker: {hashrate_th, gpu_info}}(供 salad 低效按池路由)。
+    herominers / 未注册池 → {}(不作权威, salad 退容器日志判定)。某池查询失败 → {}(→ 日志兜底, 不误杀)。"""
+    if pool_id == "herominers":
+        return {}
+    fn = _POOL_HASHRATE_FN.get(pool_id)
+    if not fn:
+        return {}
+    try:
+        return fn(config) or {}
+    except Exception as exc:
+        log(f"pool {pool_id} worker check failed: {type(exc).__name__}: {exc}")
+        return {}
 
 
 def compact_location(offer):
