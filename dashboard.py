@@ -832,6 +832,10 @@ def tick_output(pool=None):
                if float(t.get("amount") or 0) > 0]
     with _lock:
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
+        if "output_tw_baseline" not in s:  # twpool 产出基线(自重置起算); 仅在数据有效时设, error-dict 不设(留待下次 tick 重试, 避免基线=0 致 avg 高估)
+            _twb = twpool_data()
+            if isinstance(_twb, dict) and "_error" not in _twb:
+                s["output_tw_baseline"] = round(float(_twb.get("balance") or 0) + float(_twb.get("paid") or 0), 4)
         if not s.get("output_init"):
             s["output_init"] = True
             s["output_last_credit_ts"] = max([ts for ts, _ in credits], default=0)
@@ -1010,9 +1014,9 @@ def build_summary(pool_key="merged"):
             key = m.get("pool") or "unknown"
             rbp[key] = rbp.get(key, 0) + 1
     running_machines = running if pool_key == "merged" else rbp.get(pool_key, 0)
-    stats = read_json(STATS_PATH, {})
     cp = coin_price()
-    ph_output = round(tick_output(pool_data()), 4)     # 始终调: 保持 pearlhash 自重置累加
+    ph_output = round(tick_output(pool_data()), 4)     # 始终调: 保持 pearlhash 自重置累加 + 惰性写 output_tw_baseline
+    stats = read_json(STATS_PATH, {})                  # 在 tick_output 之后读, 确保拿到本次可能刚写入的 output_tw_baseline
     tw = twpool_data()
     tw_total = round(float((tw or {}).get("balance") or 0) + float((tw or {}).get("paid") or 0), 4) if isinstance(tw, dict) else 0.0
     if pool_key == "pearlhash":
@@ -1045,6 +1049,17 @@ def build_summary(pool_key="merged"):
         cur_hourly = round(burn_total, 4)
         rent = round(float(stats.get("cumulative_usd", 0.0)), 4)
     eff = round(pv["total_hashrate_th"] / cur_hourly, 1) if cur_hourly > 0 else None
+    tw_baseline = float(stats.get("output_tw_baseline") or 0.0)
+    tw_since_reset = max(0.0, tw_total - tw_baseline)
+    if pool_key == "pearlhash":
+        sr_output = ph_output
+    elif pool_key == "twpool":
+        sr_output = tw_since_reset
+    else:
+        sr_output = round(ph_output + tw_since_reset, 4)
+    reset_ep = float(stats.get("reset_epoch") or 0)  # 仅 reset_epoch; 未重置过则 None(avg 需自重置窗口)
+    hours = (time.time() - reset_ep) / 3600.0 if reset_ep else 0.0
+    avg_output_per_hour = round(sr_output / hours, 4) if hours > 0 else None
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,
@@ -1057,6 +1072,7 @@ def build_summary(pool_key="merged"):
         "coin_price_usd": cp,
         "coin_price_live": _price_cache.get("prl") is not None,  # True=实时拉取, False=fallback
         "cumulative_output": output,
+        "avg_output_per_hour": avg_output_per_hour,
         "cumulative_output_usd": output_usd,
         "cumulative_profit_usd": round(output_usd - rent, 2),
         "efficiency_th_per_usd": eff,
@@ -1855,7 +1871,7 @@ ${poolLinks}
 <div class=card><div class=k>在跑机器</div><div class=v>${d.running_machines}</div><div class=sub>${pv=='merged'?poolBreak:esc(bp)}</div></div>
 <div class=card><div class=k>总算力 矿池实测</div><div class=v>${fnum(d.total_hashrate_th)} <small>TH/s</small></div></div>
 <div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · ${pv=='merged'?'自重置起算':'自更新起按池'}</div></div>
-<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · ${plabel} @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div></div>
+<div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · ${plabel} @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div><div class=sub>平均 ${d.avg_output_per_hour==null?'—':fnum(d.avg_output_per_hour,4)} <small>PEARL/h</small> <span class=muted style="font-size:10px">自重置</span></div></div>
 <div class=card><div class=k>矿池余额</div><div class=v>${d.pool_balance==null?'<span class=muted>—</span>':fnum(d.pool_balance,4)+' <small>PEARL</small>'}</div><div class=sub>${pbasis=='all_time'?'TW Pool':(pbasis=='since_reset'?'PearlHash':'两池合计')}</div></div>
 <div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>${proflabel}</div></div>
 <div class=card><div class=k>算力性价比</div><div class=v>${d.efficiency_th_per_usd==null?'<span class=muted>—</span>':fnum(d.efficiency_th_per_usd,1)+' <small>TH/($·h)</small>'}</div><div class=sub>${pv=='merged'?'(全部)':poolName(pv)}总算力 / 当前$/h</div></div>
