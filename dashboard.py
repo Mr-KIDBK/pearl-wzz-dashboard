@@ -293,6 +293,39 @@ def herominers_data(force=False):
     return data
 
 
+_pearlfortune = {"data": None, "ts": 0.0}
+PEARLFORTUNE_API = "https://pearlfortune.org/api/v1"
+
+def pearlfortune_data(force=False):
+    """pearlfortune per-address 统计, serve-stale 缓存。合并两端点:
+    {"miner": <GET /miners/<addr>?hours=24&tz_offset_min=480>, "connections": <GET /miners/<addr>/connections>}
+    或 {"_error":...}。金额原子单位 1e8。"""
+    now = time.time()
+    if _pearlfortune["data"] is not None and not force and (now - _pearlfortune["ts"] < POOL_STALE_MAX):
+        return _pearlfortune["data"]
+    addr = prl_address()
+    data = {}
+    if addr:
+        try:
+            a = urllib.parse.quote(addr)
+            req1 = urllib.request.Request(
+                f"{PEARLFORTUNE_API}/miners/{a}?hours=24&tz_offset_min=480",
+                headers={"User-Agent": "sniper-dashboard/1.0"})
+            with urllib.request.urlopen(req1, timeout=15) as r:
+                miner = json.loads(r.read().decode("utf-8"))
+            req2 = urllib.request.Request(
+                f"{PEARLFORTUNE_API}/miners/{a}/connections",
+                headers={"User-Agent": "sniper-dashboard/1.0"})
+            with urllib.request.urlopen(req2, timeout=15) as r:
+                conns = json.loads(r.read().decode("utf-8"))
+            data = {"miner": miner, "connections": conns}
+        except Exception as e:
+            data = {"_error": f"{type(e).__name__}: {e}"}
+    _pearlfortune["data"] = data
+    _pearlfortune["ts"] = now
+    return data
+
+
 _machine_images = {}  # account -> {"data": {machine_id: image}, "ts": ts}
 
 def account_machine_images(acct, force=False):
@@ -795,6 +828,10 @@ def _refresh_once():
         herominers_data(force=True)
     except Exception:
         pass
+    try:
+        pearlfortune_data(force=True)
+    except Exception:
+        pass
     for acct in list_accounts():
         try:
             if platform_of(acct) == "salad":
@@ -1034,6 +1071,46 @@ def _herominers_view():
     for name, w in items:
         w = w or {}
         raw = w.get("hashrate") if isinstance(w, dict) else None
+        try:
+            th = round(float(raw) / 1e12, 2) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            th = 0.0
+        if th > MAX_PLAUSIBLE_WORKER_TH:
+            continue
+        total += th
+        wlist.append({"name": name, "th": th, "ip": None, "gpus": []})
+    return {"workers": wlist, "total_hashrate_th": round(total, 2),
+            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
+
+def _pearlfortune_view():
+    """pearlfortune 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
+    余额(balances.balance_atomic)/ 已付(credits.sum_amount_atomic), 原子 1e8, 已实测确认;
+    逐-worker(connections.workers[])结构待迁移测试定型 —— 防御性解析。"""
+    data = pearlfortune_data()
+    if not isinstance(data, dict):
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+    if data.get("_error"):
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None, "pool_error": data["_error"]}
+    md = ((data.get("miner") or {}).get("data")) or {}
+    def _atom(x):
+        try: return float(x) / 1e8
+        except (TypeError, ValueError): return 0.0
+    # 余额: balances 可能为 null / 单对象 / 列表(各含 balance_atomic)
+    balances = md.get("balances")
+    bal = 0.0
+    if isinstance(balances, list):
+        bal = sum(_atom((b or {}).get("balance_atomic")) for b in balances if isinstance(b, dict))
+    elif isinstance(balances, dict):
+        bal = _atom(balances.get("balance_atomic"))
+    paid = _atom((md.get("credits") or {}).get("sum_amount_atomic"))
+    # 逐-worker: connections.workers[](结构待迁移测试确认)。防御性: 跳过非 dict; 取 name + hashrate(H/s)→TH。
+    cd = ((data.get("connections") or {}).get("data")) or {}
+    wlist, total = [], 0.0
+    for w in (cd.get("workers") or []):
+        if not isinstance(w, dict):
+            continue
+        name = w.get("name") or w.get("worker") or ""
+        raw = w.get("hashrate")
         try:
             th = round(float(raw) / 1e12, 2) if raw is not None else 0.0
         except (TypeError, ValueError):
