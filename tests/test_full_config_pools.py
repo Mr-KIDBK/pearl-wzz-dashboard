@@ -16,5 +16,9 @@ ck("pearlhash image 含 kuzigmgm", "kuzigmgm" in (by.get("pearlhash",{}).get("im
 ck("pearlhash reads_prl_host=True", by.get("pearlhash",{}).get("reads_prl_host") is True)
 ck("twpool image 含 mrkidbk/pearl-miner-twpool", "mrkidbk/pearl-miner-twpool" in (by.get("twpool",{}).get("image") or ""))
 ck("twpool reads_prl_host=False", by.get("twpool",{}).get("reads_prl_host") is False)
+pool_ids = {p["id"] for p in full["pools"]}
+ck("full_config pools 含 4 池", {"pearlhash","twpool","herominers","pearlfortune"} <= pool_ids)
+hm = next(p for p in full["pools"] if p["id"]=="herominers")
+ck("herominers label/reads_prl_host 正确", hm["label"]=="HeroMiners" and hm["reads_prl_host"] is False)
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
