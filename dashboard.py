@@ -269,6 +269,30 @@ def twpool_data(force=False):
     return data
 
 
+_herominers = {"data": None, "ts": 0.0}
+HEROMINERS_API = "https://pearl.herominers.com/api/stats_address"
+
+def herominers_data(force=False):
+    """herominers per-address 统计(余额/已付/算力/worker), serve-stale 缓存(同 twpool_data)。
+    返回 stats_address JSON; 无记录时 {"error":"Not found"}(视为空非错); 网络失败 {"_error":...}。"""
+    now = time.time()
+    if _herominers["data"] is not None and not force and (now - _herominers["ts"] < POOL_STALE_MAX):
+        return _herominers["data"]
+    addr = prl_address()
+    data = {}
+    if addr:
+        try:
+            url = f"{HEROMINERS_API}?address={urllib.parse.quote(addr)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "sniper-dashboard/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            data = {"_error": f"{type(e).__name__}: {e}"}
+    _herominers["data"] = data
+    _herominers["ts"] = now
+    return data
+
+
 _machine_images = {}  # account -> {"data": {machine_id: image}, "ts": ts}
 
 def account_machine_images(acct, force=False):
@@ -767,6 +791,10 @@ def _refresh_once():
         twpool_data(force=True)
     except Exception:
         pass
+    try:
+        herominers_data(force=True)
+    except Exception:
+        pass
     for acct in list_accounts():
         try:
             if platform_of(acct) == "salad":
@@ -975,6 +1003,47 @@ def _twpool_view():
     bal = data.get("balance") if isinstance(data, dict) else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": (float(bal) if bal is not None else None), "pool_error": err}
+
+def _herominers_view():
+    """herominers 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
+    余额/已付字段(stats.balance/paid, 原子 1e8)已实测确认; 逐-worker 与 stats.hashrate 格式
+    待迁移测试用真机数据定型 —— 这里防御性解析(取不到则空/0, 不崩)。"""
+    data = herominers_data()
+    if not isinstance(data, dict):
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+    if data.get("_error"):
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None, "pool_error": data["_error"]}
+    # Not-found / 空记录 → 空(非错误)
+    if data.get("error") or "stats" not in data:
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+    stats = data.get("stats") or {}
+    def _atom(x):
+        try: return float(x) / 1e8
+        except (TypeError, ValueError): return 0.0
+    bal = _atom(stats.get("balance"))
+    paid = _atom(stats.get("paid"))
+    # 逐-worker: herominers workers 可能是 dict{name: {...}} 或 list[{...}](待迁移测试确认)。
+    # 防御性: 两种都尝试, 取 hashrate(H/s)→ TH; 取不到记 0、不崩。
+    wlist, total = [], 0.0
+    workers = data.get("workers")
+    items = []
+    if isinstance(workers, dict):
+        items = [(str(k), v) for k, v in workers.items()]
+    elif isinstance(workers, list):
+        items = [(((w.get("name") or w.get("worker") or "") if isinstance(w, dict) else ""), w) for w in workers]
+    for name, w in items:
+        w = w or {}
+        raw = w.get("hashrate") if isinstance(w, dict) else None
+        try:
+            th = round(float(raw) / 1e12, 2) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            th = 0.0
+        if th > MAX_PLAUSIBLE_WORKER_TH:
+            continue
+        total += th
+        wlist.append({"name": name, "th": th, "ip": None, "gpus": []})
+    return {"workers": wlist, "total_hashrate_th": round(total, 2),
+            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
 
 def pool_view(which):
     """按 which 返回显示映射: {workers, total_hashrate_th, pool_balance, pool_error}。
