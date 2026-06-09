@@ -890,6 +890,11 @@ def start_portal_manager():
 # 产出 = 矿池 balance_transactions 里的正向 epoch credit(负向 Auto Payment 是提现, 不算产出)
 # + 当前待结算 pending。首次观测时把已有 credit 标记为基线、记录起始 pending,
 # 之后只累加新出现的 credit; 显示值 = 新增已结算 + 当前 pending - 起始 pending(从 0 起涨)。
+def _baseline_key(pool_id):
+    """产出基线 stats 键名。twpool 沿用历史键 output_tw_baseline(向后兼容); 其它池 output_<pool>_baseline。"""
+    return "output_tw_baseline" if pool_id == "twpool" else f"output_{pool_id}_baseline"
+
+
 def tick_output(pool=None):
     if pool is None:
         pool = pool_data()
@@ -901,10 +906,18 @@ def tick_output(pool=None):
                if float(t.get("amount") or 0) > 0]
     with _lock:
         s = read_json(STATS_PATH, {"cumulative_usd": 0.0, "last_epoch": time.time()})
-        if "output_tw_baseline" not in s:  # twpool 产出基线(自重置起算); 仅在数据有效时设, error-dict 不设(留待下次 tick 重试, 避免基线=0 致 avg 高估)
-            _twb = twpool_data()
-            if isinstance(_twb, dict) and "_error" not in _twb:
-                s["output_tw_baseline"] = round(float(_twb.get("balance") or 0) + float(_twb.get("paid") or 0), 4)
+        import sniper as S                          # 局部 import(同 build_full_config 风格)
+        for _pk in S.POOLS:                          # 非-pearlhash 池: 设产出基线(全期 balance+paid); 仅在数据有效时设, error 不设(留待重试避免基线=0 致 avg 高估)
+            if _pk == "pearlhash":
+                continue
+            _bk = _baseline_key(_pk)
+            if _bk in s:
+                continue
+            _v = POOL_MONITORS[_pk]["view"]()        # 归一化视图(含 pool_balance/pool_paid); error 不设(留待重试)
+            if not _v.get("pool_error"):
+                _b = _v.get("pool_balance") or 0.0
+                _p = _v.get("pool_paid") or 0.0
+                s[_bk] = round(float(_b) + float(_p), 4)
         if not s.get("output_init"):
             s["output_init"] = True
             s["output_last_credit_ts"] = max([ts for ts, _ in credits], default=0)
@@ -1164,11 +1177,13 @@ def _is_running(machine):
     return machine.get("state") in (None, "running")
 
 def build_summary(pool_key="merged"):
-    pool_key = pool_key if pool_key in ("pearlhash", "twpool", "merged") else "merged"
+    import sniper as S
+    valid = set(S.POOLS) | {"merged"}
+    pool_key = pool_key if pool_key in valid else "merged"
     pv = pool_view(pool_key)
     rentals = build_rentals()
     per_plat, running = {}, 0
-    rbp = {"pearlhash": 0, "twpool": 0, "unknown": 0}
+    rbp = {k: 0 for k in S.POOLS}; rbp["unknown"] = 0       # 每池在跑机器数(POOLS 驱动)
     for acct, info in rentals.items():
         plat = platform_of(acct)
         for m in info.get("machines", []):
@@ -1180,20 +1195,31 @@ def build_summary(pool_key="merged"):
             rbp[key] = rbp.get(key, 0) + 1
     running_machines = running if pool_key == "merged" else rbp.get(pool_key, 0)
     cp = coin_price()
-    ph_output = round(tick_output(pool_data()), 4)     # 始终调: 保持 pearlhash 自重置累加 + 惰性写 output_tw_baseline
-    stats = read_json(STATS_PATH, {})                  # 在 tick_output 之后读, 确保拿到本次可能刚写入的 output_tw_baseline
-    tw = twpool_data()
-    tw_total = round(float((tw or {}).get("balance") or 0) + float((tw or {}).get("paid") or 0), 4) if isinstance(tw, dict) else 0.0
+    ph_output = round(tick_output(pool_data()), 4)     # pearlhash 自重置累加 + 惰性写各池 output_<pool>_baseline
+    stats = read_json(STATS_PATH, {})                  # 在 tick_output 之后读, 拿到刚写入的基线
+    # 每个非-pearlhash 池的全期 output(balance+paid)与自重置增量
+    non_ph = [k for k in S.POOLS if k != "pearlhash"]
+    alltime = {}     # pool -> balance+paid(全期)
+    sincere = {}     # pool -> 自重置增量
+    for pk in non_ph:
+        v = POOL_MONITORS[pk]["view"]()
+        tot = round(float(v.get("pool_balance") or 0) + float(v.get("pool_paid") or 0), 4)
+        alltime[pk] = tot
+        base = float(stats.get(_baseline_key(pk)) or 0.0)
+        sincere[pk] = max(0.0, round(tot - base, 4))
     if pool_key == "pearlhash":
         output, basis = ph_output, "since_reset"
-    elif pool_key == "twpool":
-        output, basis = tw_total, "all_time"
-    else:
-        output, basis = round(ph_output + tw_total, 4), "mixed"
-    output_usd = round(output * cp, 2)       # 折合 USD
-    # 按池当前 burn
+        sr_output = ph_output
+    elif pool_key in non_ph:
+        output, basis = alltime[pool_key], "all_time"
+        sr_output = sincere[pool_key]
+    else:  # merged
+        output, basis = round(ph_output + sum(alltime.values()), 4), "mixed"
+        sr_output = round(ph_output + sum(sincere.values()), 4)
+    output_usd = round(output * cp, 2)
+    # 按池当前 burn(POOLS 驱动)
     burn_total = 0.0
-    bbp = {"pearlhash": 0.0, "twpool": 0.0}
+    bbp = {k: 0.0 for k in S.POOLS}
     for acct, info in rentals.items():
         for m in info.get("machines", []):
             try:
@@ -1204,25 +1230,14 @@ def build_summary(pool_key="merged"):
             if m.get("pool") in bbp:
                 bbp[m["pool"]] += pr
     cbp = stats.get("cumulative_usd_by_pool") or {}
-    if pool_key == "pearlhash":
-        cur_hourly = round(bbp["pearlhash"], 4)
-        rent = round(float(cbp.get("pearlhash", 0.0)), 4)
-    elif pool_key == "twpool":
-        cur_hourly = round(bbp["twpool"], 4)
-        rent = round(float(cbp.get("twpool", 0.0)), 4)
-    else:
+    if pool_key in S.POOLS:
+        cur_hourly = round(bbp.get(pool_key, 0.0), 4)
+        rent = round(float(cbp.get(pool_key, 0.0)), 4)
+    else:  # merged
         cur_hourly = round(burn_total, 4)
         rent = round(float(stats.get("cumulative_usd", 0.0)), 4)
     eff = round(pv["total_hashrate_th"] / cur_hourly, 1) if cur_hourly > 0 else None
-    tw_baseline = float(stats.get("output_tw_baseline") or 0.0)
-    tw_since_reset = max(0.0, tw_total - tw_baseline)
-    if pool_key == "pearlhash":
-        sr_output = ph_output
-    elif pool_key == "twpool":
-        sr_output = tw_since_reset
-    else:
-        sr_output = round(ph_output + tw_since_reset, 4)
-    reset_ep = float(stats.get("reset_epoch") or 0)  # 仅 reset_epoch; 未重置过则 None(avg 需自重置窗口)
+    reset_ep = float(stats.get("reset_epoch") or 0)   # 仅 reset_epoch; 未重置过则 None
     hours = (time.time() - reset_ep) / 3600.0 if reset_ep else 0.0
     avg_output_per_hour = round(sr_output / hours, 4) if hours > 0 else None
     return {

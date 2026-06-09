@@ -10,6 +10,8 @@ def ck(n,c):
 D.prl_address=lambda: "x"
 D.pool_data=lambda force=False: {"connected_workers":[]}
 D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{}}
+D.herominers_data=lambda force=False: {"error":"Not found"}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"credits":{"sum_amount_atomic":0}}},"connections":{"data":{"workers":[]}}}
 D.pool_view=lambda which: {"pearlhash":{"workers":[],"total_hashrate_th":250.0,"pool_balance":10.0,"pool_error":None},
                            "twpool":{"workers":[],"total_hashrate_th":140.0,"pool_balance":5.0,"pool_error":None},
                            "merged":{"workers":[],"total_hashrate_th":390.0,"pool_balance":15.0,"pool_error":None}}.get(which)

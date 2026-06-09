@@ -24,6 +24,8 @@ D.coin_price = lambda: 0.5
 D.tick_output = lambda pool=None: 2.0                  # ph_output 自重置=2.0
 D.pool_data = lambda force=False: {}
 D.twpool_data = lambda force=False: {"balance": 50.0, "paid": 50.0}  # tw_total=100
+D.herominers_data=lambda force=False: {"error":"Not found"}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"credits":{"sum_amount_atomic":0}}},"connections":{"data":{"workers":[]}}}
 D.build_rentals = lambda: {}                           # 无机器 → burn 0
 D.pool_view = lambda which: {"total_hashrate_th": 0.0, "workers": [], "pool_balance": None, "pool_error": None}
 D.prl_address = lambda: "prl1x"
