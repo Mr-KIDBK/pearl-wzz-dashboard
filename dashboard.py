@@ -318,12 +318,37 @@ def pearlfortune_data(force=False):
                 headers={"User-Agent": "sniper-dashboard/1.0"})
             with urllib.request.urlopen(req2, timeout=15) as r:
                 conns = json.loads(r.read().decode("utf-8"))
-            data = {"miner": miner, "connections": conns}
+            req3 = urllib.request.Request(
+                f"{PEARLFORTUNE_API}/miners/{a}/ledger?page=1&page_size=20",
+                headers={"User-Agent": "sniper-dashboard/1.0"})
+            with urllib.request.urlopen(req3, timeout=15) as r:
+                ledger = json.loads(r.read().decode("utf-8"))
+            data = {"miner": miner, "connections": conns, "ledger": ledger}
         except Exception as e:
             data = {"_error": f"{type(e).__name__}: {e}"}
     _pearlfortune["data"] = data
     _pearlfortune["ts"] = now
     return data
+
+
+_pf_fee = {"data": None, "ts": 0.0}
+
+def pearlfortune_pool_fee(force=False):
+    """pearlfortune 矿池费率(全局, 非 per-miner), serve-stale 缓存。失败/无值 → None。"""
+    now = time.time()
+    if _pf_fee["data"] is not None and not force and (now - _pf_fee["ts"] < POOL_STALE_MAX):
+        return _pf_fee["data"]
+    val = None
+    try:
+        req = urllib.request.Request(f"{PEARLFORTUNE_API}/stats/pool-fee-rate",
+                                     headers={"User-Agent": "sniper-dashboard/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            val = (json.loads(r.read().decode("utf-8")).get("data") or {}).get("pool_fee_rate")
+    except Exception:
+        val = None
+    _pf_fee["data"] = val
+    _pf_fee["ts"] = now
+    return val
 
 
 _machine_images = {}  # account -> {"data": {machine_id: image}, "ts": ts}
@@ -1135,19 +1160,20 @@ def _herominers_view():
             "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
 
 def _pearlfortune_view():
-    """pearlfortune 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
-    余额(balances.balance_atomic)/ 已付(credits.sum_amount_atomic), 原子 1e8, 已实测确认;
-    逐-worker(connections.workers[]): 字段 worker / reported_hashrate(H/s,/1e12→TH) /
-    client_info.gpus[0].model 已经迁移测试真数据确认。"""
+    """pearlfortune 视图: 余额=balances.balance_atomic; 已付=ledger sum_payout_amount_atomic(权威);
+    累计收益=ledger sum_credit_amount_atomic; 待结算=miner.pending_shares.pending_estimate_amount_atomic;
+    worker(connections): worker/reported_hashrate/stale/client_info.gpus[0].model; 费率=pearlfortune_pool_fee()。原子 1e8。"""
     data = pearlfortune_data()
+    base = {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
+            "pending_balance": None, "credited_total": None, "shares": None, "pool_info": None, "pool_error": None}
     if not isinstance(data, dict):
-        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+        return base
     if data.get("_error"):
-        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None, "pool_error": data["_error"]}
-    md = ((data.get("miner") or {}).get("data")) or {}
+        return {**base, "pool_balance": None, "pool_paid": None, "pool_error": data["_error"]}
     def _atom(x):
         try: return float(x) / 1e8
         except (TypeError, ValueError): return 0.0
+    md = ((data.get("miner") or {}).get("data")) or {}
     # 余额: balances 可能为 null / 单对象 / 列表(各含 balance_atomic)
     balances = md.get("balances")
     bal = 0.0
@@ -1155,9 +1181,13 @@ def _pearlfortune_view():
         bal = sum(_atom((b or {}).get("balance_atomic")) for b in balances if isinstance(b, dict))
     elif isinstance(balances, dict):
         bal = _atom(balances.get("balance_atomic"))
-    paid = _atom((md.get("credits") or {}).get("sum_amount_atomic"))
-    # 逐-worker: connections.workers[](迁移测试真数据确认)。防御性: 跳过非 dict;
-    # 名取真实字段 worker(name 兜底); 算力取 reported_hashrate(H/s)→TH; gpu 取 client_info.gpus[0].model。
+    # 已付权威: ledger sum_payout_amount_atomic(字符串原子); 累计收益: sum_credit_amount_atomic
+    ld = ((data.get("ledger") or {}).get("data")) or {}
+    paid = _atom(ld.get("sum_payout_amount_atomic"))
+    credited = _atom(ld.get("sum_credit_amount_atomic"))
+    # 待结算: pending_shares.pending_estimate_amount_atomic(数字原子)
+    pending = _atom((md.get("pending_shares") or {}).get("pending_estimate_amount_atomic"))
+    # 逐-worker(connections): worker/reported_hashrate(H/s→TH)/stale/client_info.gpus[0].model
     cd = ((data.get("connections") or {}).get("data")) or {}
     wlist, total = [], 0.0
     for w in (cd.get("workers") or []):
@@ -1174,9 +1204,14 @@ def _pearlfortune_view():
         gi = (w.get("client_info") or {}).get("gpus") or []
         gpu_model = gi[0].get("model") if (gi and isinstance(gi[0], dict)) else None
         total += th
-        wlist.append({"name": name, "th": th, "ip": None, "gpus": ([gpu_model] if gpu_model else [])})
+        wlist.append({"name": name, "th": th, "ip": None,
+                      "gpus": ([gpu_model] if gpu_model else []), "stale": bool(w.get("stale"))})
+    fee = pearlfortune_pool_fee()
+    pool_info = {"network_height": None, "fee_rate": fee, "blocks_found": None} if fee is not None else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
-            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
+            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6),
+            "pending_balance": round(pending, 6), "credited_total": round(credited, 6),
+            "shares": None, "pool_info": pool_info, "pool_error": None}
 
 # 池监控适配器注册表(方案 B): pool_id → {fetch, view}。新增矿池只在此登记 + POOLS 即可。
 POOL_MONITORS = {
