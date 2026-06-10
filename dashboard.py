@@ -1178,7 +1178,8 @@ def _pearlfortune_view():
     worker(connections): worker/reported_hashrate/stale/client_info.gpus[0].model; 费率=pearlfortune_pool_fee()。原子 1e8。"""
     data = pearlfortune_data()
     base = {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
-            "pending_balance": None, "credited_total": None, "shares": None, "pool_info": None, "pool_error": None}
+            "pending_balance": None, "credited_total": None, "shares": None, "pool_info": None,
+            "hashrate_series": None, "pool_error": None}
     if not isinstance(data, dict):
         return base
     if data.get("_error"):
@@ -1221,10 +1222,28 @@ def _pearlfortune_view():
                       "gpus": ([gpu_model] if gpu_model else []), "stale": bool(w.get("stale"))})
     fee = pearlfortune_pool_fee()
     pool_info = {"network_height": None, "fee_rate": fee, "blocks_found": None} if fee is not None else None
+    def _hr_series_pf(md):
+        series = (md.get("hourly_shares") or {}).get("series")
+        if not isinstance(series, list):
+            return None
+        pts = []
+        for s in series:
+            if not isinstance(s, dict):
+                continue
+            try:
+                tss = int(s.get("hour"))
+                tot = float(s.get("total_share_sum") or 0)
+                ssum = float(s.get("share_sum") or 0)
+                ph = float(s.get("pool_hashrate") or 0)
+                val = round((ssum / tot) * ph / 1e12, 4) if (tot > 0 and ssum > 0) else 0.0
+                pts.append([tss, val])
+            except (TypeError, ValueError):
+                continue
+        return {"unit": "TH", "points": sorted(pts)} if pts else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": round(bal, 6), "pool_paid": round(paid, 6),
             "pending_balance": round(pending, 6), "credited_total": round(credited, 6),
-            "shares": None, "pool_info": pool_info, "pool_error": None}
+            "shares": None, "pool_info": pool_info, "hashrate_series": _hr_series_pf(md), "pool_error": None}
 
 # 池监控适配器注册表(方案 B): pool_id → {fetch, view}。新增矿池只在此登记 + POOLS 即可。
 POOL_MONITORS = {
