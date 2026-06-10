@@ -1391,6 +1391,7 @@ def build_summary(pool_key="merged"):
     reset_ep = float(stats.get("reset_epoch") or 0)   # 仅 reset_epoch; 未重置过则 None
     hours = (time.time() - reset_ep) / 3600.0 if reset_ep else 0.0
     avg_output_per_hour = round(output / hours, 4) if hours > 0 else None  # 总产出(含 pending)/ 统计周期小时
+    cost_per_prl_usd = round(cur_hourly / avg_output_per_hour, 4) if avg_output_per_hour else None  # 现在挖 1 PRL 的 USD 成本(关机线); avg None/0 → None 防除零
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,
@@ -1407,6 +1408,7 @@ def build_summary(pool_key="merged"):
         "cumulative_output_usd": output_usd,
         "cumulative_profit_usd": round(output_usd - rent, 2),
         "efficiency_th_per_usd": eff,
+        "cost_per_prl_usd": cost_per_prl_usd,
         "produced_basis": basis,
         "pool_balance": pv["pool_balance"],
         "pending_balance": pv.get("pending_balance"),
