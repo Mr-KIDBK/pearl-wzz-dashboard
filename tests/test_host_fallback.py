@@ -25,7 +25,9 @@ S.restart_instance_with_env = lambda provider, iid, env: (calls.append((provider
 S.notify = lambda *a, **k: None
 
 # --- vast: 即使条件全满足, 也禁用 → 返回 False, 不调用 restart, 不标 host_switched ---
+# 显式 pool=pearlhash(读 host 的池), 确保 False 来自 vast 平台禁用而非"默认池不读 host"
 config, rented = make_scene()
+config["pool"] = "pearlhash"
 calls.clear()
 r_vast = S.try_host_fallback(config, "vast", rented, "vast-contract-1")
 check("vast 返回 False(禁用兜底, 让调用方去销毁)", r_vast is False)
@@ -33,7 +35,9 @@ check("vast 未调用 restart_instance_with_env", len(calls) == 0)
 check("vast 未标记 host_switched", not rented.get("host_switched"))
 
 # --- runpod: 同样条件下应触发兜底 → 返回 True, 调用 restart 一次 ---
+# 显式 pool=pearlhash(读 host 的池才有 host 兜底语义)
 config, rented = make_scene()
+config["pool"] = "pearlhash"
 calls.clear()
 r_rp = S.try_host_fallback(config, "runpod", rented, "pod-1")
 check("runpod 返回 True(触发兜底)", r_rp is True)

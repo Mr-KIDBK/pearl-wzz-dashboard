@@ -539,9 +539,9 @@ def _raw_pool(config):
     return str((config or {}).get("pool") or "").strip()
 
 def active_pool(config):
-    """从 config 读 pool, 返回 POOLS 中的有效 key; 未知/未配默认返回 'pearlhash'。"""
+    """从 config 读 pool, 返回 POOLS 中的有效 key; 未知/未配默认返回 'pearlfortune'。"""
     p = _raw_pool(config)
-    return p if p in POOLS else "pearlhash"
+    return p if p in POOLS else "pearlfortune"
 
 def effective_image(config):
     """新抢机器用的镜像: 优先按配置的 pool 镜像; pool 未知/未配则回退 config['image']。"""
