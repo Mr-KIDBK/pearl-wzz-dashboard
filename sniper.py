@@ -201,6 +201,12 @@ def parse_latest_hashrate(log_text):
         match = re.search(r"(?:hashrate_th_s|share_equiv_th_s)=([0-9]+(?:\.[0-9]+)?)", line, re.I)
         if match:
             latest = float(match.group(1))
+            continue
+        # pearlfortune (vllm.gpu): '... proof_per_sec="145.11 T/s" ...' (T/s 即 TH/s, 与池同刻度)
+        match = re.search(r'proof_per_sec="?\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?)/s', line, re.I)
+        if match:
+            unit = (match.group(2).upper() or "") + "H"   # T/s→TH, G/s→GH, M/s→MH, 裸/s→H
+            latest = float(match.group(1)) * _HASHRATE_UNIT_MULT.get(unit, 1)
     return latest
 
 
