@@ -1104,8 +1104,13 @@ def _herominers_view():
             try: total += float(v) / 1e8
             except (TypeError, ValueError): pass
         return total
-    bal = round(_sum_atomic(data.get("unconfirmed")) + _sum_atomic(data.get("unlocked")), 6)   # 余额=未确认+已成熟(待真实产出确认元素结构)
-    paid = round(_sum_atomic(data.get("payments")), 6)                                          # 已付=payments 历史和
+    # 余额: 实测真数据确认在 stats.balance(字符串原子/1e8); 顶层 unconfirmed=[]、
+    # unlocked 是冒号分隔的区块明细串(非金额列表), 此前读它们恒取 0 = bug。
+    try:
+        bal = round(float((data.get("stats") or {}).get("balance") or 0) / 1e8, 6)
+    except (TypeError, ValueError):
+        bal = 0.0
+    paid = round(_sum_atomic(data.get("payments")), 6)                                          # 已付=payments 历史和(空时 0; 非空元素格式待真实支付确认)
     # 逐-worker: herominers workers 可能是 dict{name: {...}} 或 list[{...}](待迁移测试确认)。
     # 防御性: 两种都尝试, 取 hashrate(H/s)→ TH; 取不到记 0、不崩。
     wlist, total = [], 0.0
