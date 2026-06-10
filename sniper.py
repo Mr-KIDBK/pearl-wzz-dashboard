@@ -530,7 +530,7 @@ POOLS = {
                    "image": "docker.io/mrkidbk/pearl-miner-herominers:v3.3.6",
                    "reads_prl_host": False},  # 镜像自动测速 15 节点选优, 不需 PRL_HOST
     "pearlfortune": {"label": "PearlFortune",
-                     "image": "docker.io/mrkidbk/pearl-miner-pearlfortune:v1.1.1",
+                     "image": "docker.io/mrkidbk/pearl-miner-pearlfortune:v1.1.2",
                      "reads_prl_host": False},  # 默认 global.pearlfortune.org:443; PRL_PROXY 可覆盖(v1 不接)
 }
 
