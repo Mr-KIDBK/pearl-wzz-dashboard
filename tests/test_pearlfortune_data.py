@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""pearlfortune_data/_pearlfortune_view: 解析 balances.balance_atomic / credits.sum_amount_atomic(原子1e8)
-+ connections.workers。monkeypatch 不打网络。运行: python3 tests/test_pearlfortune_data.py"""
+"""pearlfortune_data/_pearlfortune_view: 解析 balances.balance_atomic(余额) / ledger sum_payout_amount_atomic(已付)
+/ sum_credit_amount_atomic(累计收益) / pending_estimate(待结算) + connections.workers。原子1e8。
+monkeypatch 不打网络。运行: python3 tests/test_pearlfortune_data.py"""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import dashboard as D
@@ -8,19 +9,22 @@ fails=0
 def ck(n,c):
     global fails; print(("  ✓ " if c else "  ✗ ")+n); fails+=0 if c else 1
 D.prl_address=lambda: "prl1pX"
+D.pearlfortune_pool_fee=lambda force=False: None   # 不打网络
 
-# 正常: balances 列表(含 balance_atomic) + credits.sum_amount_atomic + connections.workers
+# 正常: balances 列表(余额) + ledger(已付/收益) + pending_shares(待结算) + connections.workers
 D.pearlfortune_data=lambda force=False: {
     "miner": {"data": {
         "balances": [{"balance_atomic": 250000000}],          # 2.5 PRL
-        "credits": {"sum_amount_atomic": 1000000000},         # 10 PRL 已结算
-        "pending_shares": {"pending_estimate_amount_atomic": 50000000},
+        "pending_shares": {"pending_estimate_amount_atomic": 50000000},   # 待结算 0.5 PRL
     }},
     "connections": {"data": {"configured": True, "online": True, "workers": []}},
+    "ledger": {"data": {"sum_payout_amount_atomic": "1000000000", "sum_credit_amount_atomic": "1500000000"}},  # 已付10 / 累计收益15
 }
 v = D._pearlfortune_view()
 ck("pf 余额=2.5(250000000/1e8)", abs(v["pool_balance"]-2.5) < 1e-6)
-ck("pf 已付=10.0(sum_amount_atomic/1e8)", abs(v["pool_paid"]-10.0) < 1e-6)
+ck("pf 已付=10.0(ledger sum_payout)", abs(v["pool_paid"]-10.0) < 1e-6)
+ck("pf 累计收益=15.0(ledger sum_credit)", abs(v["credited_total"]-15.0) < 1e-6)
+ck("pf 待结算=0.5(pending_estimate)", abs(v["pending_balance"]-0.5) < 1e-6)
 ck("pf 无 error", v["pool_error"] is None)
 ck("pf workers 是列表", isinstance(v["workers"], list))
 

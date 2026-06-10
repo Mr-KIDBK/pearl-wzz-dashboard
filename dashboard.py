@@ -1103,12 +1103,15 @@ def _herominers_view():
     非零数据确认 → _sum_atomic 防御性兼容多形态。逐-worker 与 stats.hashrate 格式防御性解析(不崩)。"""
     data = herominers_data()
     if not isinstance(data, dict):
-        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": None}
     if data.get("_error"):
-        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None, "pool_error": data["_error"]}
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None,
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": data["_error"]}
     # Not-found / 空记录 → 空(非错误)
     if data.get("error") or "stats" not in data:
-        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0, "pool_error": None}
+        return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": None}
     def _sum_atomic(lst):
         # 防御: herominers unconfirmed/unlocked/payments 结构未经非零数据确认,
         # 兼容 标量数字 / 列表[数字|{"amount":..}|[..,amount]]; 取不到记 0、不崩。
@@ -1155,9 +1158,19 @@ def _herominers_view():
         if th > MAX_PLAUSIBLE_WORKER_TH:
             continue
         total += th
-        wlist.append({"name": name, "th": th, "ip": None, "gpus": []})
+        wlist.append({"name": name, "th": th, "ip": None, "gpus": [], "stale": None})
+    st = data.get("stats") or {}
+    def _int(x):
+        try: return int(x)
+        except (TypeError, ValueError): return 0
+    shares = {"good": _int(st.get("shares_good")), "invalid": _int(st.get("shares_invalid")), "stale": _int(st.get("shares_stale"))}
+    pool_info = {"network_height": (_int(st.get("networkHeight")) or None),
+                 "fee_rate": None,
+                 "blocks_found": (_int(st.get("blocksFoundPool")) or None)}
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
-            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6), "pool_error": None}
+            "pool_balance": round(bal, 6), "pool_paid": round(paid, 6),
+            "shares": shares, "pool_info": pool_info,
+            "pending_balance": None, "credited_total": None, "pool_error": None}
 
 def _pearlfortune_view():
     """pearlfortune 视图: 余额=balances.balance_atomic; 已付=ledger sum_payout_amount_atomic(权威);
