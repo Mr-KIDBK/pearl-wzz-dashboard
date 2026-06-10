@@ -2124,7 +2124,13 @@ let ssd=d.stats_since?new Date(d.stats_since*1000):null;let ssl=ssd?((ssd.getMon
 let pbasis=d.produced_basis||'mixed';
 let plabel=pbasis=='since_reset'?('自重置起算'+(ssl?(' (统计自 '+ssl+')'):'')):(pbasis=='all_time'?'全期(已付+未付)':'PearlHash 自重置 + TW Pool 全期');
 let proflabel=pbasis=='since_reset'?'产出折合 − 累计租金':'产出折合 − 累计租金 · ⚠ 口径不一(全期产出 vs 自重置租金), 仅供参考';
-let wk=(d.workers||[]).map(w=>`<tr><td>${esc(w.name)}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
+let wk=(d.workers||[]).map(w=>`<tr${w.stale?' style="opacity:.5"':''}><td>${esc(w.name)}${w.stale?' <span class=muted>(离线)</span>':''}</td><td>${esc((w.gpus||[]).join(', '))}</td><td><b style=color:var(--acc)>${fnum(w.th)}</b> TH/s</td><td>${esc(w.ip)}</td></tr>`).join('')||'<tr><td colspan=4 class=muted>矿池暂无在挖 worker</td></tr>';
+let _det=[];
+if(d.pending_balance!=null) _det.push(`待结算 <b>${fnum(d.pending_balance,4)}</b> PEARL`);
+if(d.credited_total!=null) _det.push(`累计收益 <b>${fnum(d.credited_total,4)}</b> PEARL`);
+if(d.shares) _det.push(`份额 <b style=color:#5cb85c>${d.shares.good||0}</b>·<b style=color:#d9534f>${d.shares.invalid||0}</b>·<b class=muted>${d.shares.stale||0}</b> <span class=muted style=font-size:10px>有效·无效·过期</span>`);
+if(d.pool_info){let pi=[];if(d.pool_info.network_height!=null)pi.push('高度 '+d.pool_info.network_height);if(d.pool_info.fee_rate!=null)pi.push('费率 '+(d.pool_info.fee_rate*100).toFixed(1)+'%');if(d.pool_info.blocks_found!=null)pi.push('爆块 '+d.pool_info.blocks_found);if(pi.length)_det.push(pi.join(' · '));}
+let detBar=_det.length?`<div class=card style="grid-column:1/-1"><div class=sub style="line-height:1.9">${_det.join('&nbsp;&nbsp;|&nbsp;&nbsp;')}</div></div>`:'';
 let poolName=q=>q=='unknown'?'未知':(PL[q]||q);
 let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
@@ -2154,6 +2160,7 @@ ${poolLinks}
 <div class=card><div class=k>累计租金</div><div class=v>$${fnum(d.cumulative_rent_usd)}</div><div class=sub>$${fnum(d.current_hourly_usd)}/h · ${pv=='merged'?'自重置起算':'自更新起按池'}</div></div>
 <div class=card><div class=k>累计产出</div><div class=v style=color:var(--acc)>${fnum(d.cumulative_output,4)} <small>PEARL</small></div><div class=sub>≈ $${fnum(d.cumulative_output_usd)} · ${plabel} @ $${fnum(d.coin_price_usd,2)}/币${d.coin_price_live?' <span style="color:var(--ok);font-size:10px">实时</span>':''}</div><div class=sub>平均 ${d.avg_output_per_hour==null?'—':fnum(d.avg_output_per_hour,4)} <small>PEARL/h</small> <span class=muted style="font-size:10px">自重置</span></div></div>
 <div class=card><div class=k>矿池余额</div><div class=v>${d.pool_balance==null?'<span class=muted>—</span>':fnum(d.pool_balance,4)+' <small>PEARL</small>'}</div><div class=sub>${pv=='merged'?'各池合计':poolName(pv)}</div></div>
+${detBar}
 <div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>${proflabel}</div></div>
 <div class=card><div class=k>算力性价比</div><div class=v>${d.efficiency_th_per_usd==null?'<span class=muted>—</span>':fnum(d.efficiency_th_per_usd,1)+' <small>TH/($·h)</small>'}</div><div class=sub>${pv=='merged'?'(全部)':poolName(pv)}总算力 / 当前$/h</div></div>
 </div>
