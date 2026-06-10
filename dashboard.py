@@ -2185,6 +2185,13 @@ if(d.credited_total!=null) _det.push(`累计收益 <b>${fnum(d.credited_total,4)
 if(d.shares) _det.push(`份额 <b style=color:#5cb85c>${d.shares.good||0}</b>·<b style=color:#d9534f>${d.shares.invalid||0}</b>·<b class=muted>${d.shares.stale||0}</b> <span class=muted style=font-size:10px>有效·无效·过期</span>`);
 if(d.pool_info){let pi=[];if(d.pool_info.network_height!=null)pi.push('高度 '+d.pool_info.network_height);if(d.pool_info.fee_rate!=null)pi.push('费率 '+(d.pool_info.fee_rate*100).toFixed(1)+'%');if(d.pool_info.blocks_found!=null)pi.push('爆块 '+d.pool_info.blocks_found);if(pi.length)_det.push(pi.join(' · '));}
 let detBar=_det.length?`<div class=card style="grid-column:1/-1"><div class=sub style="line-height:1.9">${_det.join('&nbsp;&nbsp;|&nbsp;&nbsp;')}</div></div>`:'';
+window._lastData=d;
+let hrPanel='';
+if(d.hashrate_series && (d.hashrate_series.points||[]).length){
+  let u=d.hashrate_series.unit;
+  let ulabel=u=='TH'?'TH/s':'相对算力(份额指标·仅趋势)';
+  hrPanel=`<div class="kpanel" id=hrpanel><div class=khead onclick="toggleHr()"><span>算力趋势 / HASHRATE <span class=muted style=font-size:11px>· ${ulabel}</span></span><span class=karr>▼</span></div><div class=kbody id=hrbody><div class=kcanvas-wrap><canvas class=kc id=hrcanvas height=300></canvas></div></div></div>`;
+}
 let poolName=q=>q=='unknown'?'未知':(PL[q]||q);
 let plat='';for(const aid of Object.keys(r).sort((a,b)=>((r[b]&&r[b].machines||[]).length)-((r[a]&&r[a].machines||[]).length))){const v=r[aid];const p=v.platform||aid;
 let badges=`<span class="pill ${v.process_running?'ok':'bad'}">${v.process_running?'RUNNING':'STOPPED'}</span>`+(v.rent_paused?'<span class="pill warn">RENT PAUSED</span>':'');
@@ -2239,14 +2246,36 @@ ${ssl?`<span class=muted style="font-size:12px">统计自 ${ssl} 起算</span>`:
   <div class=kcanvas-wrap id=kwrap2 style=margin-top:4px><canvas class=kc id=kvcanvas height=70></canvas></div>
 </div>
 </div>
+${hrPanel}
 <div class=sec><div class=lbl>矿池在挖 WORKER</div><table><tr><th>Worker</th><th>GPU</th><th>算力</th><th>IP</th></tr>${wk}</table></div>
 <div class=sec><div class=lbl>各平台租用情况</div>${plat}</div>`;
 let _pvsel=document.getElementById('poolView'); if(_pvsel)_pvsel.value=localStorage.getItem('pool_view')||'merged';
 // renderOverview 每次重建 DOM 后恢复 K线展开状态
 if(_kopen){const kp=document.getElementById('kpanel');if(kp){kp.classList.add('open');if(_kdata)setTimeout(()=>drawKline(_kdata),0);else loadKline();}}
+if(_hropen){const hp=document.getElementById('hrpanel');if(hp){hp.classList.add('open');setTimeout(()=>{if(d.hashrate_series)drawHr(d.hashrate_series);},0);}}
 }
 
 // ---------- K线图 ----------
+let _hropen=false;
+function toggleHr(){_hropen=!_hropen;const p=document.getElementById('hrpanel');if(p)p.classList.toggle('open',_hropen);if(_hropen)setTimeout(()=>{const d=window._lastData;if(d&&d.hashrate_series)drawHr(d.hashrate_series);},0);}
+function drawHr(series){
+  const cc=document.getElementById('hrcanvas');if(!cc||!series||!series.points||!series.points.length)return;
+  const DPR=window.devicePixelRatio||1;const W=cc.parentElement.clientWidth;const H=300;
+  cc.width=W*DPR;cc.height=H*DPR;cc.style.width=W+'px';cc.style.height=H+'px';
+  const ctx=cc.getContext('2d');ctx.setTransform(DPR,0,0,DPR,0,0);ctx.clearRect(0,0,W,H);
+  const pts=series.points;const PAD=44,PADB=24;
+  const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  const minX=Math.min(...xs),maxX=Math.max(...xs)||minX+1;
+  const maxY=Math.max(...ys,0.0001)*1.1,minY=0;
+  const px=t=>PAD+(t-minX)/((maxX-minX)||1)*(W-PAD-8);
+  const py=v=>H-PADB-(v-minY)/((maxY-minY)||1)*(H-PADB-10);
+  ctx.strokeStyle='rgba(128,128,128,.18)';ctx.fillStyle='rgba(128,128,128,.8)';ctx.font='10px monospace';
+  for(let i=0;i<=4;i++){const v=minY+(maxY-minY)*i/4,y=py(v);ctx.beginPath();ctx.moveTo(PAD,y);ctx.lineTo(W-8,y);ctx.stroke();ctx.fillText(v.toFixed(v<10?2:0),4,y+3);}
+  ctx.strokeStyle='#3fc1c9';ctx.lineWidth=1.6;ctx.beginPath();
+  pts.forEach((p,i)=>{const x=px(p[0]),y=py(p[1]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+  const fmt=t=>{const dt=new Date(t*1000);return (dt.getMonth()+1)+'-'+dt.getDate()+' '+String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');};
+  ctx.fillText(fmt(minX),PAD,H-8);ctx.fillText(fmt(maxX),W-92,H-8);
+}
 let _kper='15m',_kopen=false,_kdata=null;
 const _kperMap={'15m':15,'1h':60,'4h':240,'1d':1440};
 function toggleKline(){_kopen=!_kopen;const p=document.getElementById('kpanel');if(p)p.classList.toggle('open',_kopen);if(_kopen&&!_kdata)loadKline();}
