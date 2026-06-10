@@ -2226,6 +2226,7 @@ ${poolLinks}
 ${detBar}
 <div class=card><div class=k>累计折合利润</div><div class=v style="color:${d.cumulative_profit_usd>=0?'var(--acc)':'#ff6b6b'}">$${fnum(d.cumulative_profit_usd)}</div><div class=sub>${proflabel}</div></div>
 <div class=card><div class=k>算力性价比</div><div class=v>${d.efficiency_th_per_usd==null?'<span class=muted>—</span>':fnum(d.efficiency_th_per_usd,1)+' <small>TH/($·h)</small>'}</div><div class=sub>${pv=='merged'?'(全部)':poolName(pv)}总算力 / 当前$/h</div></div>
+<div class=card><div class=k>挖矿成本 / 关机线</div><div class=v>${d.cost_per_prl_usd==null?'<span class=muted>—</span>':'$'+fnum(d.cost_per_prl_usd,4)+' <small>/PRL</small>'}</div><div class=sub>${d.cost_per_prl_usd==null?'<span class=muted>无产出, 暂无法判定</span>':(d.cost_per_prl_usd < d.coin_price_usd?('<span style=color:var(--acc)>盈利中 · 币价 $'+fnum(d.coin_price_usd,4)+'</span>'):('<span style="color:#ff6b6b">⚠ 币价 $'+fnum(d.coin_price_usd,4)+' 低于成本, 应关机</span>'))}</div></div>
 </div>
 ${ROLE=='admin'?`<div class=row style="gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
 <span class=muted style="font-size:12px">PRL/USDT <b style="color:var(--hi);font-family:var(--mono)">$${fnum(d.coin_price_usd,4)}</b>${d.coin_price_live?' <span style="color:var(--ok);font-size:10px;letter-spacing:.4px">● 实时</span>':' <span style="color:var(--warn);font-size:10px">离线</span>'}</span>
