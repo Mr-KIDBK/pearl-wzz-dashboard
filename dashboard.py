@@ -1124,14 +1124,14 @@ def _herominers_view():
     data = herominers_data()
     if not isinstance(data, dict):
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
-                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": None}
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "hashrate_series": None, "pool_error": None}
     if data.get("_error"):
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": None, "pool_paid": None,
-                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": data["_error"]}
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "hashrate_series": None, "pool_error": data["_error"]}
     # Not-found / 空记录 → 空(非错误)
     if data.get("error") or "stats" not in data:
         return {"workers": [], "total_hashrate_th": 0.0, "pool_balance": 0.0, "pool_paid": 0.0,
-                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "pool_error": None}
+                "shares": None, "pool_info": None, "pending_balance": None, "credited_total": None, "hashrate_series": None, "pool_error": None}
     def _sum_atomic(lst):
         # 防御: herominers unconfirmed/unlocked/payments 结构未经非零数据确认,
         # 兼容 标量数字 / 列表[数字|{"amount":..}|[..,amount]]; 取不到记 0、不崩。
@@ -1187,10 +1187,23 @@ def _herominers_view():
     pool_info = {"network_height": (_int(st.get("networkHeight")) or None),
                  "fee_rate": None,
                  "blocks_found": (_int(st.get("blocksFoundPool")) or None)}
+    def _hr_series_hm(d):
+        ch = (d.get("charts") or {}).get("hashrate") if isinstance(d, dict) else None
+        if not isinstance(ch, list):
+            return None
+        pts = []
+        for p in ch:
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                try:
+                    pts.append([int(p[0]), float(p[1])])
+                except (TypeError, ValueError):
+                    continue
+        return {"unit": "share", "points": sorted(pts)} if pts else None
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": round(bal, 6), "pool_paid": round(paid, 6),
             "shares": shares, "pool_info": pool_info,
-            "pending_balance": None, "credited_total": None, "pool_error": None}
+            "pending_balance": None, "credited_total": None,
+            "hashrate_series": _hr_series_hm(data), "pool_error": None}
 
 def _pearlfortune_view():
     """pearlfortune 视图: 余额=balances.balance_atomic; 已付=ledger sum_payout_amount_atomic(权威);

@@ -42,5 +42,16 @@ ck("twpool 无 history → None", D._twpool_view()["hashrate_series"] is None)
 D.twpool_data=lambda force=False: {"_error":"boom"}
 ck("twpool error → None", D._twpool_view()["hashrate_series"] is None)
 
+# --- herominers: charts.hashrate [ts,hr,workers] → points(share 刻度)---
+D.herominers_data=lambda force=False: {"stats":{"balance":"0"},"workers":[],"payments":[],"charts":{"hashrate":[[1781023455,35476,4],[1781024175,2381,4]]}}
+hh=D._herominers_view()["hashrate_series"]
+ck("hm unit=share", hh and hh["unit"]=="share")
+ck("hm 点数=2 + 值原样", len(hh["points"])==2 and hh["points"][0][1]==35476)
+ck("hm 点按 ts 升序", hh["points"][0][0] < hh["points"][1][0])
+D.herominers_data=lambda force=False: {"stats":{"balance":"0"},"workers":[],"payments":[]}
+ck("hm 无 charts → None", D._herominers_view()["hashrate_series"] is None)
+D.herominers_data=lambda force=False: {"error":"Not found"}
+ck("hm Not-found → None", D._herominers_view().get("hashrate_series") is None)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
