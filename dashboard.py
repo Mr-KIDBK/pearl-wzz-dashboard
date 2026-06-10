@@ -1316,6 +1316,7 @@ def pool_view(which):
             "credited_total": _sum_opt("credited_total"),
             "shares": shares_merged,
             "pool_info": None,   # 多池不合并网络信息(单池视图才显示)
+            "hashrate_series": None,   # 多池刻度混合(TH/share), 不叠加; 单池才显示
             "pool_error": (errs[0] if errs else None)}
 
 
@@ -1412,6 +1413,7 @@ def build_summary(pool_key="merged"):
         "credited_total": pv.get("credited_total"),
         "shares": pv.get("shares"),
         "pool_info": pv.get("pool_info"),
+        "hashrate_series": pv.get("hashrate_series"),
         "pool_view": pool_key,
         "pools": [{"id": k, "label": v["label"]} for k, v in S.POOLS.items()],
         "stats_since": int(float(stats.get("reset_epoch") or stats.get("last_epoch") or 0)),

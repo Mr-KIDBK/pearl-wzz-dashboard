@@ -53,5 +53,20 @@ ck("hm 无 charts → None", D._herominers_view()["hashrate_series"] is None)
 D.herominers_data=lambda force=False: {"error":"Not found"}
 ck("hm Not-found → None", D._herominers_view().get("hashrate_series") is None)
 
+# --- pool_view 单池透传 / merged None;build_summary 透传 ---
+D.pool_data=lambda force=False: {"balance":0,"connected_workers":[]}
+D.twpool_data=lambda force=False: {"reported":{},"balance":0,"paid":0,"history":{"a.w1":[{"time":1781037480,"hashrate":100000000000000}]}}
+D.herominers_data=lambda force=False: {"error":"Not found"}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None}},"connections":{"data":{"workers":[]}},"ledger":{"data":{}}}
+ck("pool_view twpool 透传 series", (D.pool_view("twpool").get("hashrate_series") or {}).get("unit")=="TH")
+ck("pool_view pearlhash → None(无字段)", D.pool_view("pearlhash").get("hashrate_series") is None)
+ck("pool_view merged → None", D.pool_view("merged").get("hashrate_series") is None)
+# build_summary 透传
+D.coin_price=lambda: 1.0; D.build_rentals=lambda: {}; D.tick_output=lambda pool=None: 0.0
+import time as _t
+D.read_json=lambda p, default=None: {"reset_epoch": _t.time()-3600, "cumulative_usd":0.0, "cumulative_usd_by_pool":{}}
+ck("build_summary(twpool) 透传 hashrate_series", (D.build_summary("twpool").get("hashrate_series") or {}).get("unit")=="TH")
+ck("build_summary(merged) hashrate_series None", D.build_summary("merged").get("hashrate_series") is None)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
