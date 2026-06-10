@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""build_summary.avg_output_per_hour: 自重置产出/自重置小时数。
-twpool 用 output_tw_baseline 扣减; 随 pool_key; hours>0 守卫。
+"""build_summary.avg_output_per_hour: 总产出(含 pending)/ 统计周期小时(now - reset_epoch)。
+不再扣 baseline 自重置增量; 随 pool_key; hours>0 守卫。
+tick_output 仍惰性写 output_<pool>_baseline(reset 语义保留, 但 avg 不再用)。
 运行: python3 tests/test_avg_output.py"""
 import os, sys, json, tempfile
 from pathlib import Path
@@ -25,12 +26,13 @@ D.tick_output = lambda pool=None: 2.0                  # ph_output 自重置=2.0
 D.pool_data = lambda force=False: {}
 D.twpool_data = lambda force=False: {"balance": 50.0, "paid": 50.0}  # tw_total=100
 D.herominers_data=lambda force=False: {"error":"Not found"}
-D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"credits":{"sum_amount_atomic":0}}},"connections":{"data":{"workers":[]}}}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None}},"connections":{"data":{"workers":[]}},"ledger":{"data":{}}}
+D.pearlfortune_pool_fee=lambda force=False: None       # 不打网络
 D.build_rentals = lambda: {}                           # 无机器 → burn 0
 D.pool_view = lambda which: {"total_hashrate_th": 0.0, "workers": [], "pool_balance": None, "pool_error": None}
 D.prl_address = lambda: "prl1x"
 
-# reset 2h 前; tw 基线 90 → tw_since_reset = 100-90 = 10
+# reset 2h 前; 新口径 avg = 总产出 / 2h(不扣 baseline; baseline 留作 reset 语义)
 json.dump({"reset_epoch": FakeTime.t - 7200, "output_tw_baseline": 90.0,
            "cumulative_usd": 0.0, "cumulative_usd_by_pool": {}}, open(D.STATS_PATH, "w"))
 
@@ -38,16 +40,16 @@ ph = D.build_summary("pearlhash")
 tw = D.build_summary("twpool")
 mg = D.build_summary("merged")
 ck("pearlhash avg = ph_output(2)/2h = 1.0", abs(ph["avg_output_per_hour"] - 1.0) < 1e-6)
-ck("twpool avg = tw_since_reset(10)/2h = 5.0", abs(tw["avg_output_per_hour"] - 5.0) < 1e-6)
-ck("merged avg = (2+10)/2h = 6.0", abs(mg["avg_output_per_hour"] - 6.0) < 1e-6)
+ck("twpool avg = tw_total(100)/2h = 50.0(新口径不扣 baseline)", abs(tw["avg_output_per_hour"] - 50.0) < 1e-6)
+ck("merged avg = (ph2 + tw100)/2h = 51.0", abs(mg["avg_output_per_hour"] - 51.0) < 1e-6)
 
 # 刚重置(hours=0)→ None
 json.dump({"reset_epoch": FakeTime.t, "output_tw_baseline": 90.0}, open(D.STATS_PATH, "w"))
 ck("hours<=0 → avg None", D.build_summary("merged")["avg_output_per_hour"] is None)
 
-# tw_total < baseline(提现)→ tw_since_reset 不为负
+# 新口径: baseline 不影响 avg(总产出/小时)。baseline150、tw_total100、hours=1 → avg=100
 json.dump({"reset_epoch": FakeTime.t - 3600, "output_tw_baseline": 150.0}, open(D.STATS_PATH, "w"))
-ck("tw_total<baseline → 不为负(twpool avg=0)", D.build_summary("twpool")["avg_output_per_hour"] == 0.0)
+ck("baseline 不影响 avg(twpool avg = tw_total100/1h = 100)", abs(D.build_summary("twpool")["avg_output_per_hour"] - 100.0) < 1e-6)
 
 # tick_output 惰性基线: twpool error-dict → 不设 baseline(留待重试, 避免基线=0); 正常数据 → 设
 PEARL_POOL = {"pending_rewards": {"total_pending": 0}, "balance_transactions": []}

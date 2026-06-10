@@ -1300,7 +1300,8 @@ def build_summary(pool_key="merged"):
     sincere = {}     # pool -> 自重置增量
     for pk in non_ph:
         v = POOL_MONITORS[pk]["view"]()
-        tot = round(float(v.get("pool_balance") or 0) + float(v.get("pool_paid") or 0), 4)
+        tot = round(float(v.get("pool_balance") or 0) + float(v.get("pool_paid") or 0)
+                    + float(v.get("pending_balance") or 0), 4)
         alltime[pk] = tot
         base = float(stats.get(_baseline_key(pk)) or 0.0)
         sincere[pk] = max(0.0, round(tot - base, 4))
@@ -1336,7 +1337,7 @@ def build_summary(pool_key="merged"):
     eff = round(pv["total_hashrate_th"] / cur_hourly, 1) if cur_hourly > 0 else None
     reset_ep = float(stats.get("reset_epoch") or 0)   # 仅 reset_epoch; 未重置过则 None
     hours = (time.time() - reset_ep) / 3600.0 if reset_ep else 0.0
-    avg_output_per_hour = round(sr_output / hours, 4) if hours > 0 else None
+    avg_output_per_hour = round(output / hours, 4) if hours > 0 else None  # 总产出(含 pending)/ 统计周期小时
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,
@@ -1355,6 +1356,10 @@ def build_summary(pool_key="merged"):
         "efficiency_th_per_usd": eff,
         "produced_basis": basis,
         "pool_balance": pv["pool_balance"],
+        "pending_balance": pv.get("pending_balance"),
+        "credited_total": pv.get("credited_total"),
+        "shares": pv.get("shares"),
+        "pool_info": pv.get("pool_info"),
         "pool_view": pool_key,
         "pools": [{"id": k, "label": v["label"]} for k, v in S.POOLS.items()],
         "stats_since": int(float(stats.get("reset_epoch") or stats.get("last_epoch") or 0)),
