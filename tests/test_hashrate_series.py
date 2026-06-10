@@ -27,5 +27,20 @@ ck("pf total=0 不崩→0", D._pearlfortune_view()["hashrate_series"]["points"][
 D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None}},"connections":{"data":{"workers":[]}},"ledger":{"data":{}}}
 ck("pf 无 series → None", D._pearlfortune_view()["hashrate_series"] is None)
 
+# --- twpool: history 多 worker 按 time 合并求和(真实 H/s → TH) ---
+D.twpool_data=lambda force=False: {"reported":{},"balance":0,"paid":0,"history":{
+  "addr.w1":[{"time":1781037480,"hashrate":249332312823027},{"time":1781037600,"hashrate":218144801430118}],
+  "addr.w2":[{"time":1781037480,"hashrate":100000000000000}],
+}}
+ts=D._twpool_view()["hashrate_series"]
+ck("twpool unit=TH", ts and ts["unit"]=="TH")
+ck("twpool t1 合并 w1+w2=(249.33+100)≈349.33TH", abs(ts["points"][0][1]-349.33)<0.1)
+ck("twpool t2 仅 w1≈218.14TH", abs(ts["points"][1][1]-218.14)<0.1)
+ck("twpool 点按 ts 升序", ts["points"][0][0] < ts["points"][1][0])
+D.twpool_data=lambda force=False: {"reported":{},"balance":0,"paid":0}
+ck("twpool 无 history → None", D._twpool_view()["hashrate_series"] is None)
+D.twpool_data=lambda force=False: {"_error":"boom"}
+ck("twpool error → None", D._twpool_view()["hashrate_series"] is None)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")

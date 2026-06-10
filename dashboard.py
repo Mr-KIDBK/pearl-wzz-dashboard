@@ -1091,10 +1091,30 @@ def _twpool_view():
         wlist.append({"name": worker, "th": th, "ip": None, "gpus": []})
     bal = data.get("balance") if isinstance(data, dict) else None
     paid = data.get("paid") if isinstance(data, dict) else None
+    def _hr_series_tw(d):
+        hist = d.get("history") if isinstance(d, dict) else None
+        if not isinstance(hist, dict):
+            return None
+        bytime = {}
+        for _wk, pts in hist.items():
+            if not isinstance(pts, list):
+                continue
+            for p in pts:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    t = int(p.get("time"))
+                    hr = float(p.get("hashrate") or 0)
+                except (TypeError, ValueError):
+                    continue
+                bytime[t] = bytime.get(t, 0.0) + hr
+        if not bytime:
+            return None
+        return {"unit": "TH", "points": [[t, round(v / 1e12, 4)] for t, v in sorted(bytime.items())]}
     return {"workers": wlist, "total_hashrate_th": round(total, 2),
             "pool_balance": (float(bal) if bal is not None else None),
             "pool_paid": (float(paid) if paid is not None else None),
-            "pool_error": err}
+            "hashrate_series": _hr_series_tw(data), "pool_error": err}
 
 def _herominers_view():
     """herominers 矿池视图: {workers, total_hashrate_th, pool_balance, pool_paid, pool_error}。
