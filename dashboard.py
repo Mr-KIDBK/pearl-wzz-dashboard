@@ -1248,11 +1248,22 @@ def pool_view(which):
                 by_name[w["name"]] = w
     bals = [v["pool_balance"] for v in views if v.get("pool_balance") is not None]
     errs = [v["pool_error"] for v in views if v.get("pool_error")]
+    def _sum_opt(key):
+        vals = [v[key] for v in views if v.get(key) is not None]
+        return round(sum(vals), 6) if vals else None
+    shares_list = [v.get("shares") for v in views if isinstance(v.get("shares"), dict)]
+    shares_merged = None
+    if shares_list:
+        shares_merged = {k: sum(int(s.get(k) or 0) for s in shares_list) for k in ("good", "invalid", "stale")}
     return {"workers": sorted(by_name.values(), key=lambda w: w.get("name") or ""),
             "total_hashrate_th": round(sum(v.get("total_hashrate_th") or 0 for v in views), 2),
             "pool_balance": (round(sum(bals), 4) if bals else None),
             "pool_paid": (round(sum(v["pool_paid"] for v in views if v.get("pool_paid") is not None), 4)
                           if any(v.get("pool_paid") is not None for v in views) else None),
+            "pending_balance": _sum_opt("pending_balance"),
+            "credited_total": _sum_opt("credited_total"),
+            "shares": shares_merged,
+            "pool_info": None,   # 多池不合并网络信息(单池视图才显示)
             "pool_error": (errs[0] if errs else None)}
 
 

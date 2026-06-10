@@ -47,5 +47,17 @@ D.herominers_data=lambda force=False: {
 ck("herominers 余额读 stats.balance=0.050322", abs(D.pool_view("herominers")["pool_balance"]-0.050322) < 1e-6)
 ck("herominers payments 空 → pool_paid=0", D.pool_view("herominers")["pool_paid"]==0.0)
 
+# merged 聚合新字段: pending/credited 求和(跳过 None), shares 各池累加, pool_info merged→None
+D.pool_data=lambda force=False: {"balance":10.0,"connected_workers":[]}
+D.twpool_data=lambda force=False: {"balance":5.0,"paid":20.0,"reported":{}}
+D.pearlfortune_pool_fee=lambda force=False: 0.05
+D.herominers_data=lambda force=False: {"stats":{"balance":"0","shares_good":8,"shares_invalid":1,"shares_stale":0,"networkHeight":70811},"workers":[],"payments":[]}
+D.pearlfortune_data=lambda force=False: {"miner":{"data":{"balances":None,"pending_shares":{"pending_estimate_amount_atomic":16017212}}},"connections":{"data":{"workers":[]}},"ledger":{"data":{"sum_payout_amount_atomic":"0","sum_credit_amount_atomic":"800000000"}}}
+mg=D.pool_view("merged")
+ck("merged pending_balance=0.16017212(仅 pf)", abs((mg.get("pending_balance") or 0)-0.16017212)<1e-6)
+ck("merged credited_total=8.0(仅 pf)", abs((mg.get("credited_total") or 0)-8.0)<1e-6)
+ck("merged shares 累加 good=8", (mg.get("shares") or {}).get("good")==8)
+ck("merged pool_info=None(多池不合并)", mg.get("pool_info") is None)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")
