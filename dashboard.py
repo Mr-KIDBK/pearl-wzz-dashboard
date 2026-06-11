@@ -533,6 +533,22 @@ SALAD_GPU_PRICES = {
     "rtx a5000":         {"low": 0.143, "medium": 0.197, "high": 0.25},
 }
 
+# salad 无独立 class、按基础型号同 class 计费的卡 → 价格 key 别名(gpu_key 归一后再解析)。
+# 例: salad 无 'RTX 4080 SUPER' class, 它按 'RTX 4080 (16 GB)' class 计费 → 复用 RTX 4080 的实时价。
+SALAD_PRICE_ALIAS = {"rtx 4080 super": "rtx 4080"}
+
+def salad_inst_price_num(gname, classprice, prio):
+    """实例时价(USD/h): salad gpu-classes 实时价(classprice, 先解析别名)优先 → SALAD_GPU_PRICES 兜底 → None。
+    classprice = {gpu_key: 该组 prio 的实时价}; prio = 组优先级(high/medium/low/batch)。
+    salad 组多为 batch 优先级, 而兜底表只有 low/medium/high → 无 salad class 的卡(如 4080 SUPER)
+    必须靠别名命中 classprice 才有价, 否则上层回退组级区间 label。"""
+    k = gpu_key(gname)
+    k = SALAD_PRICE_ALIAS.get(k, k)
+    if k in classprice:
+        return classprice[k]
+    fb = SALAD_GPU_PRICES.get(k, {}).get(prio)
+    return float(fb) if fb is not None else None
+
 _gpucls = {}  # org -> {"data", "ts"}
 
 def salad_gpu_prices(base, org, key):
@@ -633,11 +649,7 @@ def _salad_compute(account_id):
                 if info.get("name") and pr is not None:
                     classprice[gpu_key(info.get("name"))] = float(pr)
             def inst_price_num(gname):
-                k = gpu_key(gname)
-                if k in classprice:
-                    return classprice[k]
-                fb = SALAD_GPU_PRICES.get(k, {}).get(prio)
-                return float(fb) if fb is not None else None
+                return salad_inst_price_num(gname, classprice, prio)
             def inst_price(gname):
                 n = inst_price_num(gname)
                 return f"${n:.3f}/h" if n is not None else label
