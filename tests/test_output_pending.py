@@ -25,5 +25,9 @@ ck("累计产出含待结算 0.16(balance0+paid0+pending0.16)", abs(s["cumulativ
 ck("每小时产出=总产出/2h=0.08", abs(s["avg_output_per_hour"]-0.08)<1e-4)
 ck("透传 pending_balance", abs((s.get("pending_balance") or 0)-0.16)<1e-6)
 
+# reset 后: baseline = 当前 alltime(含pending 0.16)→ sincere=alltime-baseline=0 → 累计产出归零
+D.read_json=lambda p, default=None: {"reset_epoch": time.time()-7200, "cumulative_usd":0.0, "cumulative_usd_by_pool":{}, "output_pearlfortune_baseline": 0.16}
+ck("reset 后产出归零(baseline 含 pending=0.16)", abs(D.build_summary("pearlfortune")["cumulative_output"]-0.0)<1e-6)
+
 if fails: print(f"\n{fails} 失败"); sys.exit(1)
 print("\n全部通过")

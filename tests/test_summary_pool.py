@@ -20,6 +20,7 @@ D.pool_view=lambda which: {
   "merged":{"workers":[{"name":"wph","th":250.0,"ip":"1","gpus":[]},{"name":"gpu10","th":140.0,"ip":None,"gpus":[]}],"total_hashrate_th":390.0,"pool_balance":15.0,"pool_error":None},
 }.get(which, {"workers":[],"total_hashrate_th":0.0,"pool_balance":None,"pool_error":None})
 D.tick_output=lambda pool=None: 100.0   # pearlhash 自重置产出固定 100
+D.read_json=lambda p, default=None: {"reset_epoch": 0, "cumulative_usd": 0.0, "cumulative_usd_by_pool": {}}  # 干净 stats(无 baseline → sincere=alltime), 隔离真实 state
 
 s_ph=D.build_summary("pearlhash")
 ck("pearlhash 总算力 250", s_ph["total_hashrate_th"]==250.0)
@@ -30,18 +31,18 @@ ck("pearlhash 矿池余额 10", s_ph["pool_balance"]==10.0)
 
 s_tw=D.build_summary("twpool")
 ck("twpool 总算力 140", s_tw["total_hashrate_th"]==140.0)
-ck("twpool 产出=balance+paid=25", s_tw["cumulative_output"]==25.0)
-ck("twpool basis=all_time", s_tw["produced_basis"]=="all_time")
+ck("twpool 产出=sincere(25-0)=25", s_tw["cumulative_output"]==25.0)
+ck("twpool basis=since_reset", s_tw["produced_basis"]=="since_reset")
 ck("twpool 矿池余额 5", s_tw["pool_balance"]==5.0)
 
 s_mg=D.build_summary("merged")
 ck("merged 总算力 390", s_mg["total_hashrate_th"]==390.0)
-ck("merged 产出=100+25=125", s_mg["cumulative_output"]==125.0)
-ck("merged basis=mixed", s_mg["produced_basis"]=="mixed")
+ck("merged 产出=ph100+sincere25=125", s_mg["cumulative_output"]==125.0)
+ck("merged basis=since_reset", s_mg["produced_basis"]=="since_reset")
 ck("merged 矿池余额 15", s_mg["pool_balance"]==15.0)
 
 s_def=D.build_summary("zzz")   # 非法 → merged
-ck("非法 pool 回退 merged(basis=mixed)", s_def["produced_basis"]=="mixed")
+ck("非法 pool 回退 merged(basis=since_reset)", s_def["produced_basis"]=="since_reset")
 
 # 折合利润 = 产出*币价 - 累计租金, 随产出变(只断言结构存在)
 ck("含 cumulative_profit_usd", "cumulative_profit_usd" in s_tw)

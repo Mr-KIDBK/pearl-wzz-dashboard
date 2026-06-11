@@ -40,16 +40,16 @@ ph = D.build_summary("pearlhash")
 tw = D.build_summary("twpool")
 mg = D.build_summary("merged")
 ck("pearlhash avg = ph_output(2)/2h = 1.0", abs(ph["avg_output_per_hour"] - 1.0) < 1e-6)
-ck("twpool avg = tw_total(100)/2h = 50.0(新口径不扣 baseline)", abs(tw["avg_output_per_hour"] - 50.0) < 1e-6)
-ck("merged avg = (ph2 + tw100)/2h = 51.0", abs(mg["avg_output_per_hour"] - 51.0) < 1e-6)
+ck("twpool avg = sincere(100-90=10)/2h = 5.0", abs(tw["avg_output_per_hour"] - 5.0) < 1e-6)
+ck("merged avg = (ph2 + sincere10)/2h = 6.0", abs(mg["avg_output_per_hour"] - 6.0) < 1e-6)
 
 # 刚重置(hours=0)→ None
 json.dump({"reset_epoch": FakeTime.t, "output_tw_baseline": 90.0}, open(D.STATS_PATH, "w"))
 ck("hours<=0 → avg None", D.build_summary("merged")["avg_output_per_hour"] is None)
 
-# 新口径: baseline 不影响 avg(总产出/小时)。baseline150、tw_total100、hours=1 → avg=100
+# 自重置口径: tot<baseline(提现后)→ sincere=max(0,100-150)=0 → avg=0
 json.dump({"reset_epoch": FakeTime.t - 3600, "output_tw_baseline": 150.0}, open(D.STATS_PATH, "w"))
-ck("baseline 不影响 avg(twpool avg = tw_total100/1h = 100)", abs(D.build_summary("twpool")["avg_output_per_hour"] - 100.0) < 1e-6)
+ck("tot<baseline → sincere=0 → twpool avg=0", D.build_summary("twpool")["avg_output_per_hour"] == 0.0)
 
 # tick_output 惰性基线: twpool error-dict → 不设 baseline(留待重试, 避免基线=0); 正常数据 → 设
 PEARL_POOL = {"pending_rewards": {"total_pending": 0}, "balance_transactions": []}

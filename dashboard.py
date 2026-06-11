@@ -954,7 +954,8 @@ def tick_output(pool=None):
             if not _v.get("pool_error"):
                 _b = _v.get("pool_balance") or 0.0
                 _p = _v.get("pool_paid") or 0.0
-                s[_bk] = round(float(_b) + float(_p), 4)
+                _pend = _v.get("pending_balance") or 0.0
+                s[_bk] = round(float(_b) + float(_p) + float(_pend), 4)
         if not s.get("output_init"):
             s["output_init"] = True
             s["output_last_credit_ts"] = max([ts for ts, _ in credits], default=0)
@@ -1362,10 +1363,10 @@ def build_summary(pool_key="merged"):
         output, basis = ph_output, "since_reset"
         sr_output = ph_output
     elif pool_key in non_ph:
-        output, basis = alltime[pool_key], "all_time"
+        output, basis = sincere[pool_key], "since_reset"
         sr_output = sincere[pool_key]
     else:  # merged
-        output, basis = round(ph_output + sum(alltime.values()), 4), "mixed"
+        output, basis = round(ph_output + sum(sincere.values()), 4), "since_reset"
         sr_output = round(ph_output + sum(sincere.values()), 4)
     output_usd = round(output * cp, 2)
     # 按池当前 burn(POOLS 驱动)

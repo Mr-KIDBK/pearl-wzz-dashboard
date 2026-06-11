@@ -11,7 +11,9 @@ addr="prl1pX"; D.prl_address=lambda: addr
 D.coin_price=lambda: 1.0
 tf = tempfile.NamedTemporaryFile(suffix=".json", delete=False); tf.close()
 D.STATS_PATH = tf.name
-json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{"herominers":3.0,"pearlfortune":4.0},"reset_epoch":0}, open(tf.name,"w"))
+# 预设各池 baseline=0 → tick_output 不覆盖(if in s skip)→ sincere=alltime(测聚合, 不被"首次 baseline=alltime 归零"干扰)
+json.dump({"cumulative_usd":0.0,"cumulative_usd_by_pool":{"herominers":3.0,"pearlfortune":4.0},"reset_epoch":0,
+           "output_herominers_baseline":0.0,"output_pearlfortune_baseline":0.0,"output_tw_baseline":0.0}, open(tf.name,"w"))
 # 池数据
 D.pool_data=lambda force=False: {"balance":0.0,"connected_workers":[],"pending_rewards":{"total_pending":0},"balance_transactions":[]}
 D.twpool_data=lambda force=False: {"balance":0.0,"paid":0.0,"reported":{}}
