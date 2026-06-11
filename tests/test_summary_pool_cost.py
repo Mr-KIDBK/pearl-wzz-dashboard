@@ -16,6 +16,7 @@ D.pool_view=lambda which: {"pearlhash":{"workers":[],"total_hashrate_th":250.0,"
                            "twpool":{"workers":[],"total_hashrate_th":140.0,"pool_balance":5.0,"pool_error":None},
                            "merged":{"workers":[],"total_hashrate_th":390.0,"pool_balance":15.0,"pool_error":None}}.get(which)
 D.tick_output=lambda pool=None: 100.0
+D.update_output_snapshot=lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH
 D.list_accounts=lambda: ["acc"]
 D.platform_of=lambda a: "runpod"
 D.build_rentals=lambda: {"acc":{"platform":"runpod","machines":[

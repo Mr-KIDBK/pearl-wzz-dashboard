@@ -982,6 +982,28 @@ def tick_output(pool=None):
         return cumulative
 
 
+def update_output_snapshot(merged_out):
+    """维护 output 滚动快照(节流 5min / 裁剪 4h), 返回最近3h产出(无 ≥3h 前快照或差≤0 → None)。"""
+    now = int(time.time())
+    with _lock:
+        s = read_json(STATS_PATH, {})
+        snaps = [x for x in (s.get("output_snapshots") or [])
+                 if isinstance(x, dict) and (x.get("ts") or 0) >= now - 4*3600]   # 裁剪 >4h
+        if (not snaps) or (now - int(snaps[-1]["ts"]) >= 300):                      # 节流 5min
+            snaps.append({"ts": now, "out": round(float(merged_out), 4)})
+        s["output_snapshots"] = snaps
+        try:
+            json.dump(s, open(STATS_PATH, "w"))
+        except Exception:
+            pass
+    cutoff = now - 3*3600
+    prior = [x for x in snaps if int(x["ts"]) <= cutoff]
+    if not prior:
+        return None
+    diff = round(float(merged_out) - float(prior[-1]["out"]), 4)
+    return diff if diff > 0 else None
+
+
 # ---------- 实时币价(SafeTrade REST) / 重置统计 ----------
 def fetch_coin_price(force=False):
     """从 SafeTrade 拉取 PRL/USDT 最新成交价(ticker.last)。
@@ -1392,7 +1414,9 @@ def build_summary(pool_key="merged"):
     reset_ep = float(stats.get("reset_epoch") or 0)   # 仅 reset_epoch; 未重置过则 None
     hours = (time.time() - reset_ep) / 3600.0 if reset_ep else 0.0
     avg_output_per_hour = round(output / hours, 4) if hours > 0 else None  # 总产出(含 pending)/ 统计周期小时
-    cost_per_prl_usd = round(cur_hourly / avg_output_per_hour, 4) if avg_output_per_hour else None  # 现在挖 1 PRL 的 USD 成本(关机线); avg None/0 → None 防除零
+    merged_out = round(ph_output + sum(sincere.values()), 4)   # 全局自重置总产出(无论当前 pool_key), 供快照
+    recent3h_output = update_output_snapshot(merged_out)
+    cost_per_prl_usd = round(cur_hourly / avg_output_per_hour, 4) if avg_output_per_hour else None  # (Task3 替换为两成本)
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,

@@ -40,6 +40,7 @@ def fake_ar(acct):
 D.active_rentals = fake_ar
 D.pool_data = lambda force=False: {}
 D.tick_output = lambda pool=None: 0.0
+D.update_output_snapshot = lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH
 D.coin_price = lambda: 0.75
 D.prl_address = lambda: ""
 

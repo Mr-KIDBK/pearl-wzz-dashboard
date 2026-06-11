@@ -63,6 +63,7 @@ ck("pool_view pearlhash → None(无字段)", D.pool_view("pearlhash").get("hash
 ck("pool_view merged → None", D.pool_view("merged").get("hashrate_series") is None)
 # build_summary 透传
 D.coin_price=lambda: 1.0; D.build_rentals=lambda: {}; D.tick_output=lambda pool=None: 0.0
+D.update_output_snapshot=lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH
 import time as _t
 D.read_json=lambda p, default=None: {"reset_epoch": _t.time()-3600, "cumulative_usd":0.0, "cumulative_usd_by_pool":{}}
 ck("build_summary(twpool) 透传 hashrate_series", (D.build_summary("twpool").get("hashrate_series") or {}).get("unit")=="TH")

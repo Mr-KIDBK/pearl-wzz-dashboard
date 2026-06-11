@@ -10,6 +10,7 @@ def ck(n,c):
 D.prl_address=lambda: "prl1pX"
 D.coin_price=lambda: 1.0
 D.tick_output=lambda pool=None: 0.0
+D.update_output_snapshot=lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH(Task3 改为控制 recent3h)
 D.read_json=lambda p, default=None: {"reset_epoch": _t.time()-7200, "cumulative_usd":0.0, "cumulative_usd_by_pool":{}}
 D.pearlfortune_pool_fee=lambda force=False: None
 D.herominers_data=lambda force=False: {"error":"Not found"}

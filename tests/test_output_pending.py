@@ -11,6 +11,7 @@ D.prl_address=lambda: "prl1pX"
 D.coin_price=lambda: 1.0
 D.build_rentals=lambda: {}
 D.tick_output=lambda pool=None: 0.0     # pearlhash 产出 0, 隔离新池口径
+D.update_output_snapshot=lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH
 D.pearlfortune_pool_fee=lambda force=False: None
 # stats: reset_epoch = 2 小时前
 D.read_json=lambda p, default=None: {"reset_epoch": time.time()-7200, "cumulative_usd": 0.0, "cumulative_usd_by_pool": {}}

@@ -21,6 +21,7 @@ D.pool_view=lambda which: {
 }.get(which, {"workers":[],"total_hashrate_th":0.0,"pool_balance":None,"pool_error":None})
 D.tick_output=lambda pool=None: 100.0   # pearlhash 自重置产出固定 100
 D.read_json=lambda p, default=None: {"reset_epoch": 0, "cumulative_usd": 0.0, "cumulative_usd_by_pool": {}}  # 干净 stats(无 baseline → sincere=alltime), 隔离真实 state
+D.update_output_snapshot=lambda merged_out=None: None   # 隔离: 不写真实 STATS_PATH
 
 s_ph=D.build_summary("pearlhash")
 ck("pearlhash 总算力 250", s_ph["total_hashrate_th"]==250.0)
