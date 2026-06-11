@@ -520,6 +520,7 @@ SALAD_GPU_PRICES = {
     "rtx 5060 ti":       {"low": 0.107, "medium": 0.143, "high": 0.18},
     "rtx 4090":          {"low": 0.207, "medium": 0.253, "high": 0.30},
     "rtx 4080":          {"low": 0.167, "medium": 0.223, "high": 0.28},
+    "rtx 4080 super":    {"low": 0.167, "medium": 0.223, "high": 0.28},  # salad 无 4080 SUPER class, 按 RTX 4080 计费
     "rtx 4070 ti super": {"low": 0.147, "medium": 0.203, "high": 0.26},
     "rtx 4070 ti":       {"low": 0.133, "medium": 0.187, "high": 0.24},
     "rtx 4070":          {"low": 0.12,  "medium": 0.17,  "high": 0.22},
