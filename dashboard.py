@@ -1416,7 +1416,8 @@ def build_summary(pool_key="merged"):
     avg_output_per_hour = round(output / hours, 4) if hours > 0 else None  # 总产出(含 pending)/ 统计周期小时
     merged_out = round(ph_output + sum(sincere.values()), 4)   # 全局自重置总产出(无论当前 pool_key), 供快照
     recent3h_output = update_output_snapshot(merged_out)
-    cost_per_prl_usd = round(cur_hourly / avg_output_per_hour, 4) if avg_output_per_hour else None  # (Task3 替换为两成本)
+    cost_cumulative_usd = round(rent / output, 4) if (output and output > 0) else None              # 累计成本(自重置租金/产出, 视图)
+    cost_recent3h_usd = round((burn_total * 3) / recent3h_output, 4) if (recent3h_output and recent3h_output > 0) else None  # 最近3h实时(全局: 全局每小时租金×3 / 最近3h产出)
     return {
         "wallet": prl_address(),
         "running_machines": running_machines,
@@ -1433,7 +1434,8 @@ def build_summary(pool_key="merged"):
         "cumulative_output_usd": output_usd,
         "cumulative_profit_usd": round(output_usd - rent, 2),
         "efficiency_th_per_usd": eff,
-        "cost_per_prl_usd": cost_per_prl_usd,
+        "cost_cumulative_usd": cost_cumulative_usd,
+        "cost_recent3h_usd": cost_recent3h_usd,
         "produced_basis": basis,
         "pool_balance": pv["pool_balance"],
         "pending_balance": pv.get("pending_balance"),
