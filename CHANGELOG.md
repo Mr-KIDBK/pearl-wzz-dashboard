@@ -2,6 +2,75 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [挖矿成本指标 + 产出口径自重置] — 2026-06-11
+
+新增「挖矿成本」量化每个 $PRL 的电租成本并对比币价提示盈亏;产出口径改为自重置,重置统计后真正归零。
+
+### Added — 新增
+- **挖矿成本卡(两指标)**:
+  - 累计挖矿成本 `cost_cumulative_usd` = 累计租金 ÷ 累计产出(按当前矿池视图)。
+  - 最近 3 小时实时成本 `cost_recent3h_usd` = (当前每小时租金 × 3) ÷ 最近 3h 产出(全局口径,不随视图变)。
+  - 卡片两行各与实时币价对比:低于币价绿(盈利)/ 高于红(应关机);无数据显 —。
+- **产出滚动快照**:每 5 分钟记一次、裁剪保留 4h,用于算「最近 3h 产出」(运行不足 3h 显 —)。
+
+### Changed — 变更
+- **产出口径改为「自重置」**:非 PearlHash 池产出 = 自重置增量(全期值 − 重置基线,基线含 pending),口径统一为 `since_reset`,消除合并视图「口径不一」警示。**重置统计后累计产出真正归零**(此前用全期值,重置不归零)。平均每小时产出、利润口径随之统一。
+
+### Fixed — 修复
+- **salad RTX 4080 SUPER 成本显示成价格区间**(如 `$0.090–0.250/h`):salad 组为 batch 优先级且 gpu-classes 无 4080 SUPER class,定价两路都查不到 → 回退组级区间。改为别名复用 salad RTX 4080 class 的实时(batch)价,显示真实单价。
+
+---
+
+## [herominers + pearlfortune 双矿池 + 算力趋势图 + 池详情] — 2026-06-10
+
+新增 herominers、pearlfortune 两个矿池(共支持 4 池),默认切到 pearlfortune;池卡片加详情条与算力趋势图。
+
+### Added — 新增
+- **两个新矿池**:herominers、pearlfortune 注册接入(POOLS 驱动,共 PearlHash / TW Pool / herominers / pearlfortune 4 池),配置页可切换/一键迁移。
+- **默认矿池改为 pearlfortune**(active_pool 兜底)。
+- **池卡片详情条**:待结算、累计收益、份额(good/invalid/stale)、网络信息(高度/爆块)、worker 离线标记。
+  - pearlfortune 接 ledger(已付/收益)+ pending/费率;herominers 接 shares + pool_info。
+- **可折叠算力趋势图**:每池每小时算力折线(canvas);pf/twpool/herominers 显示,pearlhash/合并视图隐藏。
+- 待结算余额计入累计产出;每小时产出改用「总产出 ÷ 周期」口径。
+
+### Changed — 变更
+- pearlfortune 默认镜像 v1.1.1 → **v1.1.2**(修复 Salad 加壳 miner PID1 崩溃无限重启)。
+- salad 低效判定按机器所在池路由:pearlfortune 池权威 TH 门槛 / herominers 退容器日志。
+- `parse_latest_hashrate` 支持 pearlfortune `proof_per_sec` 日志算力。
+
+### Fixed — 修复
+- herominers 余额改读 `stats.balance`(真实数据证实,修此前取不到余额)。
+
+---
+
+## [Salad portal 真实 GPU/余额 + 池权威逐实例低效] — 2026-06-09
+
+通过浏览器会话从 Salad portal 抓真实单卡型号/单价/余额;salad 低效判定改为「矿池权威、逐实例」。
+
+### Added — 新增
+- **Salad portal 抓取**(常驻 headless Playwright,持登录会话):
+  - 每实例**真实单卡 GPU 型号 + 单价**(公共 API 不返回 GPU,portal 是唯一来源)。
+  - **账号真实余额**(前端显示「实时余额」,优先于手填估算)。
+  - 一次性有头登录 `salad_login.py` 存会话,之后 headless 静默续期。
+- **salad 累计租金改用 portal 真实余额下降量**(实测扣费;非-salad 仍 price×time)。
+- **累计产出卡加「平均每小时产出」**(自重置口径)。
+- 多矿池框架雏形:POOL_MONITORS 注册表 + build_summary/pool_view 跨池 POOLS 驱动。
+
+### Changed — 变更
+- **salad 低效判定改为「矿池权威、逐实例」**:矿池在线算力 ≥ 门槛=健康;曾在池出现却离线(即使容器日志在挖)即 reallocate;矿池 API 挂 / 无 machine_id / 新实例宽限期则退容器日志判定(防误杀)。
+- salad twpool 镜像换成 `mrkidbk/pearl-miner-twpool:v1.9.1`(每实例唯一 worker;runpod/vast 向后兼容)。
+- 日志算力↔实例改按 `machine_id` 关联(salad API instance_id 偶发 None,此前致算力显示 0)。
+- 项目改用 **uv** 管理(pyproject + uv.lock + Python 3.14)。
+
+### Fixed — 修复
+- `_twpool_view` 剔除矿池上报的损坏算力(单 worker > 2000 TH/s)。
+- `parse_latest_hashrate` 支持 twpool 镜像日志格式。
+
+### Notes — 注意
+- 新增 `scripts/restart-dashboard.sh` 安全重启看板(杀旧 → 等端口释放 → 起新 → 验证监听)。
+
+---
+
 ## [机器分池可视化 + 全面分池计算] — 2026-06-08
 
 总览所有指标可按矿池分别查看,机器表显示每台在哪个池并可按池筛选。
