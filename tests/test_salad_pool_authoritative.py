@@ -94,6 +94,16 @@ config, st, calls = setup(log_hr=250.0, merged=OFFLINE, machine_id=None)
 S.run_salad_cycle(config, st, live=True)
 ck("⑦无machine_id 退日志 不reallocate", len(calls) == 0)
 
+# ⑧ 无日志(missing) + 矿池API正常但本机缺席 + 超宽限超时 → 视为0算力 reallocate(修死机不被清理 bug)
+config, st, calls = setup(log_hr=None, merged=OFFLINE, pool_seen=None)
+S.run_salad_cycle(config, st, live=True)
+ck("⑧无日志+矿池API正常本机缺席+超宽限 → 视为0 reallocate", calls == [(NAME, IID)])
+
+# ⑨ 无日志(missing) + 矿池API也挂(merged空) → 无法判定, 不杀(防日志API抖动期误杀)
+config, st, calls = setup(log_hr=None, merged=APIDOWN)
+S.run_salad_cycle(config, st, live=True)
+ck("⑨无日志+矿池API也挂 → 无法判定 不reallocate(防误杀)", len(calls) == 0)
+
 # 显示口径: last_hashrate_th 仍是日志 window(250); pool_hashrate_th=None(离线)
 config, st, calls = setup(log_hr=250.0, merged=OFFLINE)
 S.run_salad_cycle(config, st, live=True)

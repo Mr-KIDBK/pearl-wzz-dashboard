@@ -116,6 +116,8 @@ def request_graphql(url, token, query, variables=None, timeout=30):
 def normalize_gpu(name):
     if not name:
         return ""
+    if "," in str(name):  # 多卡组逗号串(salad 弹性多 GPU 组 gpu 字段)无法判定单一型号 → 空, 避免误归一成首个命中型号
+        return ""
     text = re.sub(r"\s+", " ", name.upper()).replace("GEFORCE ", "")
     compact = re.sub(r"[^A-Z0-9]+", "", text)
     if "5090" in compact:
@@ -2840,7 +2842,13 @@ def run_salad_cycle(config, state, live):
             elif log_hr is not None:
                 judged_hr = log_hr
                 judge_src = "log_fallback"
+            elif pool_authoritative and pool_api_ok and bool(machine_id):
+                # 既无容器日志算力又不在矿池(且已过新实例宽限): 矿池 API 正常 → 能确认这台真离线/死机 → 视为 0 判低效。
+                # (持续 low_efficiency_stop_seconds 才 reallocate, 单轮日志抖动会被下轮恢复清掉, 不会误杀。)
+                judged_hr = 0.0
+                judge_src = "missing"
             else:
+                # 矿池 API 也挂 / 无 machine_id → 无法判定, 跳过不杀(防日志API+矿池同时抖动期误杀)。
                 continue
             if judged_hr >= float(min_hash):
                 inst_entry.pop("low_since_epoch", None)
