@@ -2806,8 +2806,12 @@ def run_salad_cycle(config, state, live):
                 inst_entry.pop("low_since_epoch", None)
                 inst_entry.pop("low_reason", None)
                 continue
-            # 新实例宽限: 还在下载/启动(新镜像首拉慢), 不判
-            if now_ts - float(inst_entry.get("first_seen_epoch") or now_ts) < int(cfg.get("salad_new_instance_grace_seconds", 600)):
+            # 新实例宽限: 还在下载/启动(新镜像首拉慢), 不判。
+            # 例外: 双无(无容器日志 + 不在矿池, 且矿池 API 正常)的 running 实例不享长宽限 ——
+            #       健康新机会先连矿池/出日志, 双无 = miner 没起来/部署失败 → 直接走 missing 判定,
+            #       首次观测后满 low_efficiency_stop_seconds(默认5分钟)即 reallocate, 不等 10 分钟宽限。
+            _is_missing = (log_hr is None and pool_hr is None and pool_authoritative and pool_api_ok and bool(machine_id))
+            if not _is_missing and now_ts - float(inst_entry.get("first_seen_epoch") or now_ts) < int(cfg.get("salad_new_instance_grace_seconds", 600)):
                 inst_entry.pop("low_since_epoch", None)
                 inst_entry.pop("low_reason", None)
                 continue

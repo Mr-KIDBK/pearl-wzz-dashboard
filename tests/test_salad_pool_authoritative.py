@@ -104,6 +104,23 @@ config, st, calls = setup(log_hr=None, merged=APIDOWN)
 S.run_salad_cycle(config, st, live=True)
 ck("⑨无日志+矿池API也挂 → 无法判定 不reallocate(防误杀)", len(calls) == 0)
 
+# ⑩ 双无 + 实例尚在新实例宽限内(350s<600) + 首次观测 → 双无绕过长宽限, 开始计时(设low_since), 不立即杀
+config, st, calls = setup(log_hr=None, merged=OFFLINE, pool_seen=None, first_seen=NOW - 350, low_since=None)
+S.run_salad_cycle(config, st, live=True)
+e = st["salad_instance_watch"][f"{NAME}:{IID}"]
+ck("⑩双无宽限内 绕过长宽限开始计时(设low_since)", e.get("low_since_epoch") == NOW)
+ck("⑩双无首次观测 不立即杀", len(calls) == 0)
+
+# ⑪ 双无 + 宽限内(350s) + 已持续低效满 low_efficiency_stop_seconds → 绕过长宽限直接杀(5分钟双无即杀)
+config, st, calls = setup(log_hr=None, merged=OFFLINE, pool_seen=None, first_seen=NOW - 350, low_since=NOW - 350)
+S.run_salad_cycle(config, st, live=True)
+ck("⑪双无宽限内+满low_seconds → 绕过宽限 reallocate", calls == [(NAME, IID)])
+
+# ⑫ 有日志但低(非双无) + 宽限内 → 仍享长宽限保护, 不杀(确认只对双无绕过)
+config, st, calls = setup(log_hr=10.0, merged=OFFLINE, first_seen=NOW - 350, low_since=NOW - 350)
+S.run_salad_cycle(config, st, live=True)
+ck("⑫有日志(非双无)宽限内 仍受宽限保护 不杀", len(calls) == 0)
+
 # 显示口径: last_hashrate_th 仍是日志 window(250); pool_hashrate_th=None(离线)
 config, st, calls = setup(log_hr=250.0, merged=OFFLINE)
 S.run_salad_cycle(config, st, live=True)
