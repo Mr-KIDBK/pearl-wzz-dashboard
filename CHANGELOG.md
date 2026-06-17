@@ -171,6 +171,16 @@ dashboard 启动/运行时检测 salad portal 会话(scid)缺失或过期,自动
 
 ---
 
+## [登录页改版 · 海洋玻璃主视觉(v2)] — 2026-06-05
+
+### Changed
+- **登录页按设计稿高保真重写**（`design_handoff_pearl_login/` v2）：整页**海洋→沙滩场景**(天空/海面渐变 + 阳光 + 漂移焦散光纹 + 浪花泡沫线 + 沙滩斑点),左侧自旋虹彩**珍珠**漂浮水中(纯 CSS 渐变 + box-shadow + conic/mask)+ whirl 动效(扩散水波纹 ×3 + 3 圈 + 双轨道粒子 + 彗尾扫光 + 光晕);右侧**玻璃拟态(frosted glass)登录卡**(`backdrop-filter:blur(22px)`,海面透过卡片隐约可见,顶部高光 sheen)。
+- 卡片内容:eyebrow / 标题(珍珠=深蓝)/ 副标题 / 干净密码框(无图标,focus 白霜环)/ 渐变登录钮(含 inset 高光)/ 分隔线 / 偷窥模式页脚。
+- Noto Sans SC + JetBrains Mono;精确还原尺寸/色值/阴影/动画;`@media(prefers-reduced-motion)` 关闭全部动画;820px 以下单列堆叠。
+- 全部样式 `#login` 作用域隔离(避免与看板 `.card/.sub` 等冲突),登录逻辑(`login()`/`guestLogin()`/`#pw`/`#lerr`)不变;登录页固定海洋浅色,不随看板亮/暗主题切换。(上一版纯浅蓝背景 + 白卡 v1 已被本版取代。)
+- 微调:珍珠左移(`translateX(-72px)`,移动端复位);登录卡缩小(max-width 296px + 收紧 padding);登录按钮半透明渐变(rgba .82,海面透出);**背景去掉沙滩,改纯海洋 + 双层浪花**(海延伸到底加深海色,浪花泡沫线移到底部 + 上方加一条反向慢摇的波线)。
+---
+
 ## [行情图表 + 实时币价] — 2026-06-05
 
 ### Added
