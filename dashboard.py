@@ -915,10 +915,11 @@ def start_portal_manager():
     for acct in list_accounts():
         if platform_of(acct) != "salad":
             continue
-        sp = salad_portal.session_path(acct)
-        if not sp.exists():
-            continue
         scfg = read_config(acct).get("salad", {}) or {}
+        if not scfg.get("enabled"):
+            continue
+        # 注: 不再因 session 文件缺失而跳过 —— 缺失/过期由 run_manager 检测并 auto_login 半自动重登引导。
+        sp = salad_portal.session_path(acct)
         accounts.append({"account": acct,
                          "org": scfg.get("organization_name"),
                          "project": scfg.get("project_name") or "default",
