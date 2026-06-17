@@ -2,6 +2,34 @@
 
 本文件记录「今晚挖珍珠 · Pearl Sniper Dashboard」的重要变更。
 
+## [Salad scid 健康检测 + 半自动弹窗重登] — 2026-06-17
+
+dashboard 启动/运行时检测 salad portal 会话(scid)缺失或过期,自动弹有头浏览器引导人工重登,登录完成自动续上抓取——不再需要手动盯着重跑 salad_login.py。
+
+### Added — 新增
+- **scid 健康检测**:`should_relogin`(纯函数)判定——会话文件**缺失**或**连续 2 轮抓取全空**(scid 过期)且距上次重登尝试满冷却(默认 30min)→ 触发重登。启动时(缺失账号)+ 运行中(连续空)都检测。
+- **半自动重登 `auto_login`**:弹有头 Chromium 到 portal,**自动轮询 portal-api 检测登录完成**(替代旧的 `input()` 等回车,后台 nohup 进程也能用);你人工过完 Turnstile/OTP、scid 生效后自动存会话、关窗、续上抓取;超时(默认 10min)放弃。
+- run_manager 每账号维护 `consecutive_empty` 计数 + `last_relogin` 冷却,过期/缺失触发 auto_login 并用新会话重建 context。
+
+### Changed — 变更
+- `start_portal_manager` 不再因 session 文件缺失而跳过账号(改按 `salad.enabled`),缺失的账号交给 run_manager 引导登录。
+
+### Notes — 注意
+- **优雅降级**:playwright 缺失 / 无 GUI 环境(ssh/服务器)弹窗失败 → 回退现状(log 提示手动 `salad_login.py`),不崩。
+
+---
+
+## [Salad 逐实例低效判定加固] — 2026-06-12
+
+修复多卡弹性组下低效判定的两个边界 bug,让死机/掉队机器被可靠清理。
+
+### Fixed — 修复
+- **死机(无容器日志 + 不在矿池)被漏判**:原逻辑两数据源都没有时直接跳过判定,致 0 算力死机不被清理。改为矿池 API 正常(能确认真离线)时视为 0 算力判低效,且双无 running 实例**绕过新实例长宽限**——首次观测后满 `low_efficiency_stop_seconds`(默认 5min)即 reallocate;矿池 API 也挂时仍跳过不杀(防抖动误杀)。
+- **多卡组逗号串误归一**:salad 弹性组的 gpu 字段(`RTX 4090,RTX 5090,...`)被 `normalize_gpu` 拼串后命中首个 "5090" → 误取最严阈值(300)。改为含逗号即返回空,回退组级阈值。
+- tests: `test_salad_pool_authoritative.py` 加 missing/绕宽限 case + 新增 `test_normalize_gpu_multi.py`。
+
+---
+
 ## [挖矿成本指标 + 产出口径自重置] — 2026-06-11
 
 新增「挖矿成本」量化每个 $PRL 的电租成本并对比币价提示盈亏;产出口径改为自重置,重置统计后真正归零。
