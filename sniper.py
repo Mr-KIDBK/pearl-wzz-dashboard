@@ -523,7 +523,7 @@ def record_rent(state, provider, external_id, gpu, price, result):
 
 POOLS = {
     "pearlhash": {"label": "PearlHash",
-                  "image": "docker.io/kuzigmgm/pearl-miner:v11",
+                  "image": "docker.io/mrkidbk/pearl-miner:v12",
                   "reads_prl_host": True},
     "twpool":    {"label": "TW Pool (小幣礦池)",
                   "image": "docker.io/mrkidbk/pearl-miner-twpool:v1.9.1",
@@ -532,7 +532,7 @@ POOLS = {
                    "image": "docker.io/mrkidbk/pearl-miner-herominers:v3.3.6",
                    "reads_prl_host": False},  # 镜像自动测速 15 节点选优, 不需 PRL_HOST
     "pearlfortune": {"label": "PearlFortune",
-                     "image": "docker.io/mrkidbk/pearl-miner-pearlfortune:v1.1.2",
+                     "image": "docker.io/mrkidbk/pearl-miner-pearlfortune:latest",
                      "reads_prl_host": False},  # 默认 global.pearlfortune.org:443; PRL_PROXY 可覆盖(v1 不接)
 }
 
